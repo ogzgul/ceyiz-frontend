@@ -126,7 +126,7 @@
               
               <div class="w-20 h-20 flex-shrink-0 bg-gray-50 rounded-xl overflow-hidden border border-gray-100 relative group-hover:border-rose-100 transition">
                  <img v-if="item.imageUrl" :src="item.imageUrl" class="w-full h-full object-cover" onerror="this.style.display='none'">
-                 <img v-else-if="item.image?.url" :src="config.public.apiBase.replace('/api','') + item.image.url" class="w-full h-full object-cover">
+                 <img v-else-if="item.image?.url" :src="item.image.url.startsWith('http') ? item.image.url : config.public.apiBase.replace('/api','') + item.image.url" class="w-full h-full object-cover">                 
                  <div v-else class="w-full h-full flex items-center justify-center text-rose-200 bg-rose-50">
                     <i class="fas fa-camera text-2xl"></i>
                  </div>
