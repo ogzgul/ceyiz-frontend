@@ -167,9 +167,20 @@
                          {{ item.is_purchased ? 'Geri Al' : 'Satın Alındı' }}
                       </button>
 
-                      <button @click="recommendItem(item)" class="text-xs font-bold text-indigo-500 hover:text-indigo-700 bg-indigo-50 px-3 py-1.5 rounded-lg border border-indigo-100 transition hover:bg-indigo-100">
-                         <i class="fas fa-star mr-1"></i> Tavsiye
-                      </button>
+                     <button 
+    v-if="!item.my_recommendation_id" 
+    @click="recommendItem(item)" 
+    class="text-xs font-bold text-indigo-500 hover:text-indigo-700 bg-indigo-50 px-3 py-1.5 rounded-lg border border-indigo-100 transition hover:bg-indigo-100">
+    <i class="fas fa-star mr-1"></i> Tavsiye
+</button>
+
+<button 
+    v-else 
+    @click="removeRecommendation(item)" 
+    class="text-xs font-bold text-red-500 hover:text-red-700 bg-red-50 px-3 py-1.5 rounded-lg border border-red-100 transition hover:bg-red-100 group">
+    <span class="group-hover:hidden"><i class="fas fa-check mr-1"></i> Tavsiye Edildi</span>
+    <span class="hidden group-hover:inline"><i class="fas fa-times mr-1"></i> Tavsiyeyi Sil</span>
+</button>
 
                       <a v-if="item.link" :href="item.link" target="_blank" class="text-gray-400 hover:text-blue-500 text-sm ml-auto px-2 py-1">
                         <i class="fas fa-external-link-alt"></i>
@@ -217,16 +228,38 @@ const ensureLoggedIn = async () => {
   }
   return true
 }
-
-// 1. LİSTE ÇEKME
+// fetchList fonksiyonunun içi:
 const fetchList = async () => {
   loading.value = true
   try {
     const ok = await ensureLoggedIn()
     if (!ok) return
 
+    // 1. Ürünleri Çek
     const res: any = await request('/api/products?sort=createdAt:desc', { method: 'GET' })
     let rawList = res?.data ?? []
+
+    // --- YENİ EKLENEN KISIM BAŞLANGIÇ ---
+    // 2. Benim tavsiyelerimi çek ve eşleştir
+    try {
+       const recRes: any = await request('/api/recommendations', {
+          method: 'GET',
+          query: {
+             'filters[user][id][$eq]': user.value.id,
+             'populate': 'product'
+          }
+       })
+       const myRecs = recRes.data || []
+       
+       // Ürün listesinde dön ve eğer tavsiyem varsa ID'sini ekle
+       rawList = rawList.map((prod: any) => {
+          const rec = myRecs.find((r: any) => r.product?.id === prod.id)
+          return { ...prod, my_recommendation_id: rec ? rec.id : null }
+       })
+    } catch (err) {
+       console.log('Tavsiye kontrolü hatası:', err)
+    }
+    // --- YENİ EKLENEN KISIM BİTİŞ ---
 
     rawList.sort((a: any, b: any) => {
       if (a.is_template && !b.is_template) return 1
@@ -235,8 +268,6 @@ const fetchList = async () => {
     })
 
     myItems.value = rawList
-    
-    // Listeyi çektikten sonra bildirimleri çek
     fetchNotifications()
 
   } catch (e: any) {
@@ -485,11 +516,64 @@ const deleteItem = async (id: number) => {
   if(confirm('Silinsin mi?')) { await request(`/api/products/${id}`, { method: 'DELETE' }); fetchList() }
 }
 
+// Tavsiye Ekleme (Güncellendi)
 const recommendItem = async (item: any) => {
-  const { value: text } = await Swal.fire({ title: 'Tavsiyeni Paylaş', input: 'textarea', inputPlaceholder: 'Düşüncelerin neler?', confirmButtonText: 'Paylaş', confirmButtonColor: '#e11d48', showCancelButton: true, cancelButtonText: 'Vazgeç' })
+  const { value: text } = await Swal.fire({ 
+      title: 'Tavsiyeni Paylaş', 
+      input: 'textarea', 
+      inputPlaceholder: 'Düşüncelerin neler?', 
+      confirmButtonText: 'Paylaş', 
+      confirmButtonColor: '#e11d48', 
+      showCancelButton: true, 
+      cancelButtonText: 'Vazgeç' 
+  })
+  
   if (text) {
-    try { await request('/api/recommendations', { method: 'POST', body: { data: { comment: text, product: item.id } } })
-      Swal.fire({ toast: true, position: 'center', icon: 'success', title: 'Tavsiyen paylaşıldı! 🎉', showConfirmButton: false, timer: 2000 }) } catch (e) { Swal.fire('Hata', 'Paylaşım yapılamadı.', 'error') } }
+    try { 
+        // Backend'e gönder
+        const res: any = await request('/api/recommendations', { 
+            method: 'POST', 
+            body: { data: { comment: text, product: item.id } } 
+        })
+        
+        // Gelen yanıtın ID'sini item'a işle (Böylece buton hemen değişir)
+        const newRecId = res.data?.id || res.id 
+        item.my_recommendation_id = newRecId
+
+        Swal.fire({ toast: true, position: 'center', icon: 'success', title: 'Tavsiyen paylaşıldı! 🎉', showConfirmButton: false, timer: 2000 }) 
+    } catch (e) { 
+        Swal.fire('Hata', 'Paylaşım yapılamadı.', 'error') 
+    } 
+  }
+}
+
+// Tavsiye Silme (Yeni)
+const removeRecommendation = async (item: any) => {
+    if(!item.my_recommendation_id) return
+
+    const confirmResult = await Swal.fire({
+        title: 'Tavsiyeni Kaldır',
+        text: 'Bu ürün için yaptığın tavsiyeyi ve yorumu silmek istiyor musun?',
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#d33',
+        cancelButtonColor: '#3085d6',
+        confirmButtonText: 'Evet, Sil',
+        cancelButtonText: 'Vazgeç'
+    })
+
+    if (confirmResult.isConfirmed) {
+        try {
+            await request(`/api/recommendations/${item.my_recommendation_id}`, { method: 'DELETE' })
+            
+            // State'i güncelle (Butonu eski haline getir)
+            item.my_recommendation_id = null
+            
+            Swal.mixin({ toast: true, position: 'center', showConfirmButton: false, timer: 1500 }).fire({ icon: 'success', title: 'Tavsiye silindi' })
+        } catch (e) {
+            Swal.fire('Hata', 'Silme işlemi başarısız.', 'error')
+        }
+    }
 }
 
 onMounted(fetchList)
