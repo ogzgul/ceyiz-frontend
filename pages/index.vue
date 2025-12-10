@@ -216,7 +216,7 @@ const fetchMyList = async () => {
 
 // 2. ÖNERİLERİ ÇEK
 const fetchRecs = async () => {
-  if (!jwt.value) return router.push('/login')
+  //if (!jwt.value) return router.push('/login')
   
   try {
     // Paralel olarak hem önerileri hem de kullanıcının listesini çekiyoruz
