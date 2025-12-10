@@ -5,7 +5,7 @@ export default defineNuxtConfig({
   ],
   runtimeConfig: {
     public: {
-      apiBase: 'http://localhost:1337'
+      apiBase: 'https://graceful-sharing-c629c8435b.strapiapp.com'
     }
   },
 
