@@ -11,16 +11,46 @@
         <h1 class="text-xl font-bold text-gray-800 tracking-tight flex items-center gap-2">
           <span class="bg-gradient-to-tr from-rose-400 to-pink-500 text-transparent bg-clip-text">Çeyiz Listem</span>
         </h1>
-        
-        <NuxtLink to="/profile" class="w-10 h-10 rounded-full bg-gradient-to-tr from-rose-400 to-pink-500 p-0.5 shadow-md hover:scale-105 transition transform cursor-pointer">
-           <div class="w-full h-full bg-white rounded-full flex items-center justify-center text-rose-500 font-bold text-sm">
-              {{ user ? getInitials(user.username) : '?' }}
-           </div>
-        </NuxtLink>
+       
+
+       <div class="flex items-center gap-3">
+    <button @click="toggleNotifications" class="w-10 h-10 rounded-full bg-white text-gray-600 border border-gray-100 hover:text-rose-500 hover:border-rose-100 transition shadow-sm flex items-center justify-center relative">
+        <i class="far fa-bell text-lg"></i>
+        <span v-if="notifications.filter(n => !n.read).length > 0" class="absolute top-0 right-0 w-3 h-3 bg-red-500 rounded-full border-2 border-white"></span>
+    </button>
+
+    <NuxtLink to="/profile" class="w-10 h-10 rounded-full bg-gradient-to-tr from-rose-400 to-pink-500 p-0.5 shadow-md hover:scale-105 transition transform cursor-pointer">
+        <div class="w-full h-full bg-white rounded-full flex items-center justify-center text-rose-500 font-bold text-sm">
+            {{ user ? getInitials(user.username) : '?' }}
+        </div>
+    </NuxtLink>
+</div>
 
       </div>
     </header>
-
+<div v-if="showNotifications" class="fixed inset-0 z-[60] flex items-start justify-center pt-20 px-4">
+    <div class="absolute inset-0 bg-transparent" @click="showNotifications = false"></div>
+    <div class="bg-white w-full max-w-sm rounded-2xl shadow-xl border border-gray-100 relative z-10 overflow-hidden animate-fade-in-up max-h-[500px] flex flex-col">
+        <div class="p-4 border-b border-gray-50 flex justify-between items-center bg-gray-50/50">
+            <h3 class="font-bold text-gray-800">Bildirimler</h3>
+            <button @click="showNotifications = false" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="overflow-y-auto p-0">
+            <div v-if="notifications.length === 0" class="p-8 text-center text-gray-400 text-sm">Henüz yeni bildirim yok.</div>
+            <div v-else class="divide-y divide-gray-50">
+                <div v-for="(notif, index) in notifications" :key="index" class="p-4 hover:bg-rose-50/30 transition flex gap-3 items-start">
+                    <div class="w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center text-xs font-bold" :class="notif.type === 'like' ? 'bg-rose-100 text-rose-600' : 'bg-blue-100 text-blue-600'">
+                        <i :class="notif.type === 'like' ? 'fas fa-heart' : 'fas fa-comment'"></i>
+                    </div>
+                    <div>
+                        <p class="text-sm text-gray-800"><span class="font-bold">{{ notif.actor }}</span> {{ notif.message }}</p>
+                        <p class="text-xs text-gray-400 mt-1">{{ formatDate(notif.date) }}</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
     <div class="max-w-3xl mx-auto px-4 py-6">
 
       <div class="grid grid-cols-2 gap-4 mb-8">
@@ -154,63 +184,30 @@
     </div>
   </div>
 </template>
-
 <script setup lang="ts">
 import Swal from 'sweetalert2'
 
+// apiUse içinden request alınıyor (Token otomatik ekliyor olabilir, kontrol et)
 const { request } = apiUse()
 const { user, me } = useAuth()
 const config = useRuntimeConfig()
+
+// --- DÜZELTME 1: Token Adı Kontrolü ---
+// Genelde 'jwt' olur. Eğer çalışmazsa Tarayıcı -> Application -> Cookies kısmına bak, adı neyse onu yaz.
+const jwtCookie = useCookie('jwt') 
 
 const myItems = ref<any[]>([])
 const loading = ref(true)
 const activeTab = ref<'alacaklar' | 'alinanlar'>('alacaklar')
 
-// Yardımcı Fonksiyon: Baş harfleri al
+// Bildirim State'leri
+const showNotifications = ref(false)
+const notifications = ref<any[]>([])
+
+// Yardımcı Fonksiyonlar
 const getInitials = (name: string) => name ? name.substring(0, 2).toUpperCase() : '?'
-
-// --- LİSTE HESAPLAMALARI ---
-const alinanlar = computed(() => myItems.value.filter(item => item.is_purchased))
-const alacaklar = computed(() => {
-  // 1. Kullanıcının sahip olduğu (template olmayan) TÜM ürünlerin başlıklarını al.
-  // (Hem satın alınanlar hem de alınacaklar dahil)
-  const userOwnedTitles = new Set(
-    myItems.value
-      .filter(i => !i.is_template) // Sadece benim eklediklerim/kopyaladıklarım
-      .map(i => i.title.toLowerCase().trim())
-  )
-  
-  return myItems.value.filter(item => {
-    // Zaten satın alınmışsa bu listede gösterme
-    if (item.is_purchased) return false
-    
-    // Eğer bu bir ŞABLON (Öneri) ise ve kullanıcının envanterinde 
-    // aynı isimde (satın alınmış veya alınmamış fark etmez) kendi kaydı varsa, 
-    // şablonu gizle. Çünkü artık kullanıcının kendi kopyası geçerlidir.
-    if (item.is_template && userOwnedTitles.has(item.title.toLowerCase().trim())) {
-      return false
-    }
-
-    return true
-  })
-})
-
-const currentList = computed(() => (activeTab.value === 'alacaklar' ? alacaklar.value : alinanlar.value))
-
-// --- FİYAT HESAPLAMALARI ---
-const totalAlacakAmount = computed(() => {
-  return alacaklar.value.reduce((sum, item) => sum + (Number(item.price) || 0), 0)
-})
-
-const totalHarcananAmount = computed(() => {
-  return alinanlar.value.reduce((sum, item) => sum + (Number(item.price) || 0), 0)
-})
-
-const formatPrice = (price: number) => {
-  return new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY' }).format(price)
-}
-
-// --- API İŞLEMLERİ ---
+const formatDate = (dateString: string) => new Date(dateString).toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })
+const formatPrice = (price: number) => new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY' }).format(price)
 
 const ensureLoggedIn = async () => {
   if (!user.value) await me().catch(() => null)
@@ -221,6 +218,7 @@ const ensureLoggedIn = async () => {
   return true
 }
 
+// 1. LİSTE ÇEKME
 const fetchList = async () => {
   loading.value = true
   try {
@@ -237,6 +235,10 @@ const fetchList = async () => {
     })
 
     myItems.value = rawList
+    
+    // Listeyi çektikten sonra bildirimleri çek
+    fetchNotifications()
+
   } catch (e: any) {
     console.error('Liste Hatası:', e)
   } finally {
@@ -244,6 +246,91 @@ const fetchList = async () => {
   }
 }
 
+// 2. BİLDİRİM ÇEKME (DÜZELTME 2: 500 Hatası için Sorgu Yapısı Değiştirildi)
+const fetchNotifications = async () => {
+    if (!user.value) return
+    
+    try {
+        // NOT: Strapi JSON parametrelerde bazen 500 verir. 
+        // Garanti olsun diye "Bracket Notation" kullanıyoruz.
+        const queryParams = {
+            'filters[user][id][$eq]': user.value.id,
+            'populate[0]': 'liked_by',
+            'populate[1]': 'comments',
+            'populate[2]': 'comments.users_permissions_user',
+            'populate[3]': 'product',
+            'sort': 'createdAt:desc'
+        }
+
+        const res: any = await request('/api/recommendations', {
+            method: 'GET',
+            query: queryParams // Artık düzgün formatta gidecek
+        })
+        
+        const myRecs = res.data || []
+        const tempNotifs: any[] = []
+
+        myRecs.forEach((rec: any) => {
+            // 1. Beğeniler
+            if (rec.liked_by) {
+                rec.liked_by.forEach((liker: any) => {
+                    // Kendim değilsem ekle (ÖNEMLİ: Kendine like atarsan buraya düşmez!)
+                    if (liker.id !== user.value.id) {
+                        tempNotifs.push({
+                            type: 'like',
+                            actor: liker.username,
+                            message: `"${rec.product?.title || 'paylaşımını'}" beğendi.`,
+                            date: rec.updatedAt,
+                            read: false
+                        })
+                    }
+                })
+            }
+
+            // 2. Yorumlar
+            if (rec.comments) {
+                rec.comments.forEach((comment: any) => {
+                    if (comment.users_permissions_user?.id !== user.value.id) {
+                        tempNotifs.push({
+                            type: 'comment',
+                            actor: comment.users_permissions_user?.username || 'Biri',
+                            message: `"${rec.product?.title || 'paylaşımına'}" yorum yaptı.`,
+                            content: comment.content,
+                            date: comment.createdAt,
+                            read: false
+                        })
+                    }
+                })
+            }
+        })
+
+        tempNotifs.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+        notifications.value = tempNotifs
+
+    } catch (e) {
+        console.error('Bildirim hatası:', e) // Konsola daha detaylı hata düşer
+    }
+}
+
+const toggleNotifications = () => {
+    showNotifications.value = !showNotifications.value
+}
+
+// --- HESAPLAMALAR ---
+const alinanlar = computed(() => myItems.value.filter(item => item.is_purchased))
+const alacaklar = computed(() => {
+  const userOwnedTitles = new Set(myItems.value.filter(i => !i.is_template).map(i => i.title.toLowerCase().trim()))
+  return myItems.value.filter(item => {
+    if (item.is_purchased) return false
+    if (item.is_template && userOwnedTitles.has(item.title.toLowerCase().trim())) return false
+    return true
+  })
+})
+const currentList = computed(() => (activeTab.value === 'alacaklar' ? alacaklar.value : alinanlar.value))
+const totalAlacakAmount = computed(() => alacaklar.value.reduce((sum, item) => sum + (Number(item.price) || 0), 0))
+const totalHarcananAmount = computed(() => alinanlar.value.reduce((sum, item) => sum + (Number(item.price) || 0), 0))
+
+// --- OPEN MODAL (JWT Düzeltmesi ile) ---
 const openAddModal = async () => {
   const ok = await ensureLoggedIn()
   if (!ok) return
@@ -258,7 +345,15 @@ const openAddModal = async () => {
         <select id="sw-category" class="w-full px-3 py-2 border rounded-lg text-sm bg-white">
            ${categories.map(c => `<option value="${c}">${c}</option>`).join('')}
         </select>
-        <input id="sw-image" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="Resim Linki (Opsiyonel)">
+        <div class="border border-dashed border-gray-300 rounded-lg p-3 bg-gray-50 text-center relative">
+            <input type="file" id="sw-file" accept="image/*" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10">
+            <div class="text-gray-500 text-sm" id="sw-file-label">
+                <i class="fas fa-cloud-upload-alt text-2xl mb-1 text-rose-400"></i><br>
+                Bilgisayardan Fotoğraf Seç
+            </div>
+        </div>
+        <div class="text-center text-xs text-gray-400 font-bold">- VEYA -</div>
+        <input id="sw-image" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="Resim Linki (İnternetten)">
         <div class="grid grid-cols-2 gap-2">
            <input id="sw-price" type="number" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="Fiyat">
            <input id="sw-link" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="Satın Alma Linki">
@@ -269,95 +364,132 @@ const openAddModal = async () => {
         </div>
       </div>
     `,
-    showCancelButton: true, confirmButtonText: 'Kaydet', confirmButtonColor: '#e11d48',
+    didOpen: () => {
+        const fileInput = document.getElementById('sw-file')
+        const urlInput = document.getElementById('sw-image') // Bunu ekledik
+        const label = document.getElementById('sw-file-label')
+        if(fileInput && urlInput && label) {
+
+// 1. Dosya seçilirse -> URL'i sil
+        fileInput.addEventListener('change', (e: any) => {
+            if (e.target.files.length > 0) {
+                label.innerHTML = `<i class="fas fa-check text-green-500"></i> ${e.target.files[0].name}`
+                label.classList.add('text-green-600', 'font-bold')
+                urlInput.value = '' // URL inputunu temizle
+            }
+        })
+
+        // 2. URL yazılırsa -> Dosyayı sil
+        urlInput.addEventListener('input', () => {
+            if(urlInput.value.length > 0) {
+                fileInput.value = '' // Dosya inputunu temizle
+                label.innerHTML = `<i class="fas fa-cloud-upload-alt text-2xl mb-1 text-rose-400"></i><br>Bilgisayardan Fotoğraf Seç`
+                label.classList.remove('text-green-600', 'font-bold')
+            }
+        })
+
+            fileInput.addEventListener('change', (e: any) => {
+                if (e.target.files.length > 0) {
+                    label.innerHTML = `<i class="fas fa-check text-green-500"></i> ${e.target.files[0].name}`
+                    label.classList.add('text-green-600', 'font-bold')
+                }
+            })
+        }
+    },
+    showCancelButton: true,
+    confirmButtonText: 'Kaydet',
+    confirmButtonColor: '#e11d48',
     preConfirm: () => {
       const title = (document.getElementById('sw-title') as HTMLInputElement)?.value?.trim()
       const category = (document.getElementById('sw-category') as HTMLSelectElement)?.value
       const imageUrl = (document.getElementById('sw-image') as HTMLInputElement)?.value?.trim()
+      const fileInput = (document.getElementById('sw-file') as HTMLInputElement)
       const priceRaw = (document.getElementById('sw-price') as HTMLInputElement)?.value
       const link = (document.getElementById('sw-link') as HTMLInputElement)?.value?.trim()
       const is_purchased = (document.getElementById('sw-purchased') as HTMLInputElement)?.checked
 
       if (!title) { Swal.showValidationMessage('Ürün adı giriniz'); return }
-      return { title, category, imageUrl, priceRaw, link, is_purchased }
+      const file = fileInput.files?.length ? fileInput.files[0] : null
+      return { title, category, imageUrl, file, priceRaw, link, is_purchased }
     }
   })
 
   if (!values) return
 
+  Swal.fire({ title: 'Kaydediliyor...', didOpen: () => Swal.showLoading() })
+
   try {
+    let uploadedImageId = null
+
+    // 1. DOSYA YÜKLEME KISMI
+    if (values.file) {
+        // Debug için konsola tokeni yazıyoruz
+        console.log("Mevcut Token:", jwtCookie.value)
+        
+        if (!jwtCookie.value) throw new Error("Oturum süreniz dolmuş olabilir. (Token bulunamadı)")
+
+        const formData = new FormData()
+        formData.append('files', values.file)
+
+        // Upload isteği
+        const uploadRes: any = await $fetch(`${config.public.apiBase}/api/upload`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${jwtCookie.value}` },
+            body: formData
+        })
+        
+        if (uploadRes && uploadRes[0]) {
+            uploadedImageId = uploadRes[0].id
+        }
+    }
+
+    // 2. ÜRÜN OLUŞTURMA
     const price = values.priceRaw ? Number(values.priceRaw) : 0
     await request('/api/products', {
       method: 'POST',
       body: {
         data: {
-          title: values.title, category: values.category, imageUrl: values.imageUrl, 
-          price: price, link: values.link || null, is_purchased: !!values.is_purchased, is_template: false,
+          title: values.title,
+          category: values.category,
+          imageUrl: values.imageUrl, 
+          image: uploadedImageId,    
+          price: price,
+          link: values.link || null,  
+          is_purchased: !!values.is_purchased,
+          is_template: false,
         },
       },
     })
+
     await fetchList()
     Swal.mixin({ toast: true, position: 'bottom-end', showConfirmButton: false, timer: 2000 }).fire({ icon: 'success', title: 'Eklendi' })
+
   } catch (e: any) {
-    Swal.fire('Hata', 'Eklenemedi.', 'error')
+    console.error(e)
+    Swal.fire('Hata', `Hata oluştu: ${e.message}`, 'error')
   }
 }
 
 const toggleStatus = async (item: any) => {
   if (item.is_template) {
-      try {
-        await request('/api/products', {
-          method: 'POST',
-          body: {
-            data: {
-              title: item.title, category: item.category, imageUrl: item.imageUrl, 
-              price: item.price, link: item.link, is_purchased: true, is_template: false,
-            }
-          }
-        })
+      try { await request('/api/products', { method: 'POST', body: { data: { title: item.title, category: item.category, imageUrl: item.imageUrl, price: item.price, link: item.link, is_purchased: true, is_template: false, } } })
         Swal.mixin({ toast: true, position: 'center', showConfirmButton: false, timer: 1500 }).fire({ icon: 'success', title: 'Listene Alındı! 🎉' })
-        await fetchList()
-      } catch (e) {
-        Swal.fire('Hata', 'İşlem yapılamadı', 'error')
-      }
-      return
-  }
-
+        await fetchList() } catch (e) { Swal.fire('Hata', 'İşlem yapılamadı', 'error') } return }
   const newStatus = !item.is_purchased
   item.is_purchased = newStatus
-  try {
-    await request(`/api/products/${item.id}`, { method: 'PUT', body: { data: { is_purchased: newStatus } } })
-    if(newStatus) {
-        Swal.mixin({ toast: true, position: 'center', showConfirmButton: false, timer: 1500 }).fire({ icon: 'success', title: 'Harika!' })
-    }
-  } catch (e) {
-    item.is_purchased = !newStatus
-  }
+  try { await request(`/api/products/${item.id}`, { method: 'PUT', body: { data: { is_purchased: newStatus } } })
+    if(newStatus) { Swal.mixin({ toast: true, position: 'center', showConfirmButton: false, timer: 1500 }).fire({ icon: 'success', title: 'Harika!' }) } } catch (e) { item.is_purchased = !newStatus }
 }
 
 const deleteItem = async (id: number) => {
-  if(confirm('Silinsin mi?')) {
-    await request(`/api/products/${id}`, { method: 'DELETE' })
-    fetchList()
-  }
+  if(confirm('Silinsin mi?')) { await request(`/api/products/${id}`, { method: 'DELETE' }); fetchList() }
 }
 
 const recommendItem = async (item: any) => {
-  const { value: text } = await Swal.fire({ 
-    title: 'Tavsiyeni Paylaş', input: 'textarea', inputPlaceholder: 'Düşüncelerin neler?',
-    confirmButtonText: 'Paylaş', confirmButtonColor: '#e11d48', showCancelButton: true, cancelButtonText: 'Vazgeç'
-  })
-  
+  const { value: text } = await Swal.fire({ title: 'Tavsiyeni Paylaş', input: 'textarea', inputPlaceholder: 'Düşüncelerin neler?', confirmButtonText: 'Paylaş', confirmButtonColor: '#e11d48', showCancelButton: true, cancelButtonText: 'Vazgeç' })
   if (text) {
-    try {
-      await request('/api/recommendations', { 
-        method: 'POST', body: { data: { comment: text, product: item.id } } 
-      })
-      Swal.fire({ toast: true, position: 'center', icon: 'success', title: 'Tavsiyen paylaşıldı! 🎉', showConfirmButton: false, timer: 2000 })
-    } catch (e) {
-      Swal.fire('Hata', 'Paylaşım yapılamadı.', 'error')
-    }
-  }
+    try { await request('/api/recommendations', { method: 'POST', body: { data: { comment: text, product: item.id } } })
+      Swal.fire({ toast: true, position: 'center', icon: 'success', title: 'Tavsiyen paylaşıldı! 🎉', showConfirmButton: false, timer: 2000 }) } catch (e) { Swal.fire('Hata', 'Paylaşım yapılamadı.', 'error') } }
 }
 
 onMounted(fetchList)
