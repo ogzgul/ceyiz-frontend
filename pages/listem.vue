@@ -240,147 +240,140 @@
 </template>
 <script setup lang="ts">
 import Swal from 'sweetalert2'
-import { shallowRef, triggerRef, computed, ref, onMounted, watch, onUnmounted } from 'vue'
+import { shallowRef, triggerRef, computed, ref, onMounted, watch } from 'vue'
 
 const { request } = apiUse()
 const { user, me } = useAuth()
 const config = useRuntimeConfig()
 const jwtCookie = useCookie('jwt') 
 
+// --- GÜVENLİ STORAGE (Netlify/SSR Hatasını %100 Önler) ---
+const safeStorage = {
+    get: (key: string) => {
+        if (typeof window !== 'undefined' && window.localStorage) {
+            return localStorage.getItem(key)
+        }
+        return null
+    },
+    set: (key: string, value: any) => {
+        if (typeof window !== 'undefined' && window.localStorage) {
+            localStorage.setItem(key, JSON.stringify(value))
+        }
+    }
+}
+
 // --- STATE ---
 const allItems = shallowRef<any[]>([]) 
-
 const loading = ref(true)
 const loadingMore = ref(false)
 const activeTab = ref<'alacaklar' | 'alinanlar'>('alacaklar')
 const selectedCategory = ref('Tümü')
 const categories = ['Tümü','Hazırlık', 'Mutfak', 'Salon', 'Yatak Odası', 'Elektronik', 'Banyo', 'Diğer']
 
-// Ekranda gösterilecek limit (Virtual Scroll benzeri mantık için)
+// Virtual Pagination (Ekrana basma limiti)
 const displayLimit = ref(20)
 
 // Bildirimler
 const showNotifications = ref(false)
 const notifications = ref<any[]>([])
 
-// Cache Anahtarı
 const CACHE_KEY = 'my_ceyiz_smart_cache'
-
-// SSR / Netlify güvenli client kontrolü
-const isClient = typeof window !== 'undefined'
-
-const readCache = () => {
-  if (!isClient) return null
-  try {
-    return localStorage.getItem(CACHE_KEY)
-  } catch {
-    return null
-  }
-}
-
-const writeCache = (data: any) => {
-  if (!isClient) return
-  try {
-    localStorage.setItem(CACHE_KEY, JSON.stringify(data))
-  } catch {
-    // localStorage kullanılamıyorsa sessiz geç
-  }
-}
 
 // --- INIT ---
 onMounted(() => {
-    // 1. Cache'den Yükle (Anında görüntü) - SSR SAFE
-    const cached = readCache()
+    // 1. Cache'den Yükle
+    const cached = safeStorage.get(CACHE_KEY)
     if (cached) {
         try {
-            allItems.value = JSON.parse(cached)
+            allItems.value = JSON.parse(cached) || []
             loading.value = false
-            console.log(`⚡ Cache: ${allItems.value.length} ürün yüklendi.`)
-        } catch (e) { console.error('Cache hatası', e) }
+        } catch (e) { console.error('Cache okuma hatası', e) }
     }
 
-    // 2. API'den Tazele (Zincirleme Çekim)
+    // 2. API'den Veri Çekmeye Başla
     fetchList(true)
     
-    // 3. Scroll Observer (Sonsuz Kaydırma - Limiti Artırma)
-    observer = new IntersectionObserver((entries) => {
-        if (entries[0].isIntersecting && !loading.value) {
-            loadMoreDisplay()
-        }
-    }, { threshold: 0.5 })
-    
-    setTimeout(() => {
-        if (loadMoreTrigger.value) observer?.observe(loadMoreTrigger.value)
-    }, 500)
-})
-
-onUnmounted(() => {
-    observer?.disconnect()
+    // 3. Scroll Observer
+    if (typeof window !== 'undefined' && 'IntersectionObserver' in window) {
+        observer = new IntersectionObserver((entries) => {
+            if (entries[0].isIntersecting && !loading.value) {
+                loadMoreDisplay()
+            }
+        }, { threshold: 0.5 })
+        
+        setTimeout(() => {
+            if (loadMoreTrigger.value) observer?.observe(loadMoreTrigger.value)
+        }, 500)
+    }
 })
 
 const loadMoreDisplay = () => {
-    if (displayLimit.value < filteredPool.value.length) {
+    if (displayLimit.value < (filteredPool.value?.length || 0)) {
         displayLimit.value += 20
     }
 }
 
-// --- FILTERING (GÖRÜNTÜLEME MANTIĞI) ---
-// 1. Filtrelenmiş Havuz (Tüm veri üzerinden)
+// --- FILTERING ---
 const filteredPool = computed(() => {
-    let list = allItems.value
+    let list = allItems.value || [] 
     const isPurchased = activeTab.value === 'alinanlar'
-    list = list.filter(item => item.is_purchased === isPurchased)
+    list = list.filter(item => item && item.is_purchased === isPurchased)
 
     if (selectedCategory.value !== 'Tümü') {
-        list = list.filter(item => item.category === selectedCategory.value)
+        list = list.filter(item => item && item.category === selectedCategory.value)
     }
     return list
 })
 
-// 2. Ekrana Basılan (Limitli)
 const currentList = computed(() => {
-    return filteredPool.value.slice(0, displayLimit.value)
+    return (filteredPool.value || []).slice(0, displayLimit.value)
 })
 
-// Kategori değişince scroll başa
+const hasMore = computed(() => displayLimit.value < (filteredPool.value?.length || 0))
+
 watch([activeTab, selectedCategory], () => {
     displayLimit.value = 20
 })
 
-// --- DATA FETCHING (ZİNCİRLEME / RECURSIVE FETCH) ---
-const fetchList = async (reset = true) => {
-    if (!reset && loading.value) return
+// Hesaplamalar
+const alacaklar = computed(() => (allItems.value || []).filter(i => i && !i.is_purchased)) 
+const alinanlar = computed(() => (allItems.value || []).filter(i => i && i.is_purchased))
+const totalAlacakAmount = computed(() => alacaklar.value.reduce((sum, item) => sum + (Number(item.price)||0), 0))
+const totalHarcananAmount = computed(() => alinanlar.value.reduce((sum, item) => sum + (Number(item.price)||0), 0))
+const totalItems = computed(() => (allItems.value || []).length) // Template için
 
-    if (reset) {
-        if (allItems.value.length === 0) loading.value = true
-    }
+
+// --- DATA FETCHING (PARÇALI / CHUNK LOAD) ---
+const fetchList = async (reset = true) => {
+    // Sadece tarayıcıda çalışsın (Netlify Server'da çalışmaz, hata vermez)
+    if (typeof window === 'undefined') return
+
+    if (!reset && loading.value) return
+    if (reset && (allItems.value || []).length === 0) loading.value = true
 
     try {
         const ok = await ensureLoggedIn()
         if (!ok) return
 
-        // 1. İLK PARTİ İSTEĞİ (İlk 500 ürün)
-        const pageSizeLimit = 500 
+        // 1. İLK PARTİ (Hızlı açılış için 200 adet çekelim)
+        const CHUNK_SIZE = 200 
         
         const queryParams: any = {
             'sort': 'createdAt:desc',
             'pagination[page]': 1,
-            'pagination[pageSize]': pageSizeLimit,
+            'pagination[pageSize]': CHUNK_SIZE,
             'filters[user][id][$eq]': user.value.id
         }
 
         const res: any = await request('/api/products', { method: 'GET', query: queryParams })
-        
         let fetchedData = res?.data ?? []
         const meta = res?.meta?.pagination
 
-        // --- TAVSİYE EŞLEŞTİRME YARDIMCISI ---
+        // Tavsiye Eşleştirme Helper
         const enrichWithRecommendations = async (items: any[]) => {
             const pIds = items.map((p: any) => p.id)
             if (pIds.length === 0) return items
-            
             try {
-                // ID'leri query string formatına çevir
                 const recQuery: any = {
                     'pagination[pageSize]': pIds.length + 50,
                     'filters[user][id][$eq]': user.value.id,
@@ -389,10 +382,8 @@ const fetchList = async (reset = true) => {
                 pIds.forEach((id: number, idx: number) => {
                     recQuery[`filters[product][id][$in][${idx}]`] = id
                 })
-                
                 const recRes: any = await request('/api/recommendations', { method: 'GET', query: recQuery })
                 const myRecs = recRes.data || []
-                
                 return items.map((prod: any) => {
                     const rec = myRecs.find((r: any) => r.product && String(r.product.id) === String(prod.id))
                     return { ...prod, my_recommendation_id: rec ? rec.id : null }
@@ -400,31 +391,32 @@ const fetchList = async (reset = true) => {
             } catch(e) { return items }
         }
 
-        // İlk partiyi eşleştir ve ekrana bas
+        // İlk partiyi işle ve ekrana bas
         fetchedData = await enrichWithRecommendations(fetchedData)
-        allItems.value = fetchedData 
+        allItems.value = fetchedData || []
         triggerRef(allItems)
         
-        // 2. KALAN SAYFALARI ARKA PLANDA ÇEK (Zincirleme)
+        // 2. KALAN SAYFALARI ARKA PLANDA ÇEK (1000, 2000, 5000 ürün fark etmez)
+        // Eğer toplam sayfa sayısı 1'den büyükse döngüye gir
         if (meta && meta.pageCount > 1) {
-            console.log(`📦 Toplam ${meta.total} ürün var. Kalan ${meta.pageCount - 1} sayfa arkada yükleniyor...`)
+            console.log(`📦 Toplam ${meta.total} ürün. Kalan ${meta.pageCount - 1} sayfa yükleniyor...`)
             
             for (let p = 2; p <= meta.pageCount; p++) {
                 const nextQuery = { ...queryParams, 'pagination[page]': p }
                 const nextRes: any = await request('/api/products', { method: 'GET', query: nextQuery })
                 let nextItems = nextRes?.data ?? []
                 
-                // Gelen yeni paketi de eşleştir
+                // Gelen paketi işle
                 nextItems = await enrichWithRecommendations(nextItems)
                 
-                // Mevcut listenin altına ekle
-                allItems.value = [...allItems.value, ...nextItems]
-                triggerRef(allItems) 
+                // Mevcut listenin altına ekle (Spread operator yerine push daha performanslı olabilir ama shallowRef ile spread güvenlidir)
+                allItems.value = [...(allItems.value || []), ...nextItems]
+                triggerRef(allItems) // Vue'ya "Liste büyüdü, güncelle" de
             }
         }
 
-        // 3. HEPSİ BİTİNCE CACHE GÜNCELLE
-        writeCache(allItems.value)
+        // 3. İŞLEM BİTTİ, CACHE GÜNCELLE
+        safeStorage.set(CACHE_KEY, allItems.value)
         
         if (reset) fetchNotifications()
 
@@ -447,27 +439,30 @@ const fetchNotifications = async () => {
         const res: any = await request('/api/recommendations', { method: 'GET', query: queryParams })
         const myRecs = res.data || []
         const tempNotifs: any[] = []
-        myRecs.forEach((rec: any) => {
-             if (rec.liked_by && Array.isArray(rec.liked_by)) {
-                rec.liked_by.forEach((liker: any) => {
-                    if (liker.id !== user.value.id) tempNotifs.push({ type: 'like', actor: liker.username, message: `"${rec.product?.title || 'paylaşımını'}" beğendi.`, date: rec.updatedAt, read: false })
-                })
-             }
-             if (rec.comments && Array.isArray(rec.comments)) {
-                rec.comments.forEach((comment: any) => {
-                    if (comment.users_permissions_user?.id !== user.value.id) {
-                        tempNotifs.push({
-                            type: 'comment',
-                            actor: comment.users_permissions_user?.username || 'Biri',
-                            message: `"${rec.product?.title || 'paylaşımına'}" yorum yaptı.`,
-                            content: comment.content,
-                            date: comment.createdAt,
-                            read: false
-                        })
-                    }
-                })
-            }
-        })
+        
+        if (Array.isArray(myRecs)) {
+            myRecs.forEach((rec: any) => {
+                if (rec.liked_by && Array.isArray(rec.liked_by)) {
+                    rec.liked_by.forEach((liker: any) => {
+                        if (liker.id !== user.value.id) tempNotifs.push({ type: 'like', actor: liker.username, message: `"${rec.product?.title || 'paylaşımını'}" beğendi.`, date: rec.updatedAt, read: false })
+                    })
+                }
+                if (rec.comments && Array.isArray(rec.comments)) {
+                    rec.comments.forEach((comment: any) => {
+                        if (comment.users_permissions_user?.id !== user.value.id) {
+                            tempNotifs.push({
+                                type: 'comment',
+                                actor: comment.users_permissions_user?.username || 'Biri',
+                                message: `"${rec.product?.title || 'paylaşımına'}" yorum yaptı.`,
+                                content: comment.content,
+                                date: comment.createdAt,
+                                read: false
+                            })
+                        }
+                    })
+                }
+            })
+        }
         tempNotifs.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
         notifications.value = tempNotifs
     } catch(e) { console.error(e) }
@@ -475,13 +470,13 @@ const fetchNotifications = async () => {
 const toggleNotifications = () => showNotifications.value = !showNotifications.value
 
 
-// --- CRUD İŞLEMLERİ (CACHE GÜNCELLEMELİ) ---
+// --- CRUD ---
 
 const deleteItem = async (id: number) => {
   if(confirm('Silinsin mi?')) { 
-      allItems.value = allItems.value.filter(i => i.id !== id)
+      allItems.value = (allItems.value || []).filter(i => i.id !== id)
       triggerRef(allItems)
-      writeCache(allItems.value)
+      safeStorage.set(CACHE_KEY, allItems.value) 
 
       try { await request(`/api/products/${id}`, { method: 'DELETE' }); } 
       catch(e) { fetchList(true) }
@@ -502,13 +497,11 @@ const toggleStatus = async (item: any) => {
     }
 
     const newStatus = !item.is_purchased
-    
-    // UI Güncelle
-    const target = allItems.value.find(i => i.id === item.id)
+    const target = (allItems.value || []).find(i => i.id === item.id)
     if (target) {
         target.is_purchased = newStatus
         triggerRef(allItems)
-        writeCache(allItems.value)
+        safeStorage.set(CACHE_KEY, allItems.value)
     }
 
     try { 
@@ -533,38 +526,34 @@ const recommendItem = async (item: any) => {
       showCancelButton: true, 
       cancelButtonText: 'Vazgeç' 
   })
-  
   if (text) {
     try { 
         const res: any = await request('/api/recommendations', { 
             method: 'POST', 
             body: { data: { comment: text, product: item.id } } 
         })
-        
-        const target = allItems.value.find(i => i.id === item.id)
+        const target = (allItems.value || []).find(i => i.id === item.id)
         if(target) {
             target.my_recommendation_id = res.data?.id || res.id
             triggerRef(allItems)
-            writeCache(allItems.value)
+            safeStorage.set(CACHE_KEY, allItems.value)
         }
-
-        Swal.fire({ toast: true, position: 'center', icon: 'success', title: 'Tavsiyen paylaşıldı!', showConfirmButton: false, timer: 2000 }) 
+        Swal.fire({ toast: true, position: 'center', icon: 'success', title: 'Paylaşıldı!', showConfirmButton: false, timer: 2000 }) 
     } catch (e) { Swal.fire('Hata', 'Paylaşım yapılamadı.', 'error') } 
   }
 }
 
 const removeRecommendation = async (item: any) => {
     if(!item.my_recommendation_id) return
-    const confirmResult = await Swal.fire({ title: 'Tavsiyeni Kaldır', icon: 'warning', showCancelButton: true, confirmButtonColor: '#d33', confirmButtonText: 'Evet, Sil' })
-
-    if (confirmResult.isConfirmed) {
+    const confirm = await Swal.fire({ title: 'Tavsiyeni Kaldır', icon: 'warning', showCancelButton: true, confirmButtonColor: '#d33', confirmButtonText: 'Evet, Sil' })
+    if (confirm.isConfirmed) {
         try {
             await request(`/api/recommendations/${item.my_recommendation_id}`, { method: 'DELETE' })
-            const target = allItems.value.find(i => i.id === item.id)
+            const target = (allItems.value || []).find(i => i.id === item.id)
             if(target) {
                 target.my_recommendation_id = null
                 triggerRef(allItems)
-                writeCache(allItems.value)
+                safeStorage.set(CACHE_KEY, allItems.value)
             }
             Swal.mixin({ toast: true, position: 'center', showConfirmButton: false, timer: 1500 }).fire({ icon: 'success', title: 'Silindi' })
         } catch (e) { Swal.fire('Hata', 'Silinemedi.', 'error') }
@@ -639,7 +628,7 @@ const openEditModal = async (item: any) => {
       body: { data: { title: values.title, category: values.category, imageUrl: values.imageUrl, image: uploadedImageId, price: price, link: values.link || null, is_purchased: !!values.is_purchased } },
     })
 
-    const target = allItems.value.find(i => i.id === item.id)
+    const target = (allItems.value || []).find(i => i.id === item.id)
     if(target) {
         target.title = values.title
         target.category = values.category
@@ -648,7 +637,7 @@ const openEditModal = async (item: any) => {
         target.is_purchased = !!values.is_purchased
     }
     triggerRef(allItems)
-    writeCache(allItems.value)
+    safeStorage.set(CACHE_KEY, allItems.value)
 
     Swal.mixin({ toast: true, position: 'bottom-end', showConfirmButton: false, timer: 2000 }).fire({ icon: 'success', title: 'Güncellendi' })
   } catch (e: any) { Swal.fire('Hata', `Güncelleme hatası: ${e.message}`, 'error') }
@@ -723,7 +712,7 @@ const openAddModal = async () => {
       body: { data: { title: values.title, category: values.category, imageUrl: values.imageUrl, image: uploadedImageId, price: price, link: values.link || null, is_purchased: !!values.is_purchased, is_template: false } },
     })
     
-    // Ekleme sonrası listeyi ve cache'i tazele
+    // Ekleme sonrası listeyi tazele
     await fetchList(true) 
     
     Swal.mixin({ toast: true, position: 'bottom-end', showConfirmButton: false, timer: 2000 }).fire({ icon: 'success', title: 'Eklendi' })
@@ -741,14 +730,4 @@ const getInitials = (name: string) => name ? name.substring(0, 2).toUpperCase() 
 const formatDate = (dateString: string) => new Date(dateString).toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })
 const formatPrice = (price: number) => new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY' }).format(price)
 
-// Computed
-const totalAlacakAmount = computed(() => allItems.value.filter(i => !i.is_purchased).reduce((sum, item) => sum + (Number(item.price)||0), 0))
-const totalHarcananAmount = computed(() => allItems.value.filter(i => i.is_purchased).reduce((sum, item) => sum + (Number(item.price)||0), 0))
-// hasMore template'de kullanılıyor, onu da expose ediyoruz
-const hasMore = computed(() => displayLimit.value < filteredPool.value.length)
-
-// Template için
-const alacaklar = computed(() => allItems.value.filter(i => !i.is_purchased)) 
-const alinanlar = computed(() => allItems.value.filter(i => i.is_purchased))
-const totalItems = ref(0) // Eski kodla uyumluluk (zaten meta'dan güncellenmiyor artık)
 </script>
