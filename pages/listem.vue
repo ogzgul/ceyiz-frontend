@@ -354,28 +354,16 @@ watch([activeTab, selectedCategory], () => {
 
 // Hesaplamalar (Güvenli)// --- Script içindeki "Hesaplamalar" kısmını bununla değiştir ---
 
-// Güvenli liste erişimi
+// Güvenli liste erişimi// Hesaplamalar (Güvenli)
 const safeItems = computed(() => allItems.value || [])
 
-// Listeleri ayır (Template için)
+// filter içinde (i && ...) kontrolü ekledik
 const alacaklar = computed(() => safeItems.value.filter(i => i && !i.is_purchased)) 
 const alinanlar = computed(() => safeItems.value.filter(i => i && i.is_purchased))
 
-// --- DÜZELTME BURADA ---
-// Toplam tutarları doğrudan ana liste üzerinden hesaplıyoruz.
-// Bu yöntem shallowRef ile daha uyumludur ve anlık güncellenir.
-const totalAlacakAmount = computed(() => {
-    return (allItems.value || [])
-        .filter(i => i && !i.is_purchased)
-        .reduce((sum, item) => sum + (Number(item.price) || 0), 0)
-})
-
-const totalHarcananAmount = computed(() => {
-    return (allItems.value || [])
-        .filter(i => i && i.is_purchased)
-        .reduce((sum, item) => sum + (Number(item.price) || 0), 0)
-})
-
+// Reduce işlemlerinde başlangıç değeri 0 ve Number() çevrimi önemli
+const totalAlacakAmount = computed(() => alacaklar.value.reduce((sum, item) => sum + (Number(item.price)||0), 0))
+const totalHarcananAmount = computed(() => alinanlar.value.reduce((sum, item) => sum + (Number(item.price)||0), 0))
 const totalItems = computed(() => safeItems.value.length)
 
 // --- DATA FETCHING ---
@@ -507,7 +495,7 @@ const deleteItem = async (id: number) => {
 }
 // --- listem.vue içindeki toggleStatus fonksiyonunu bununla değiştir ---
 const toggleStatus = async (item: any) => {
-    // Şablon (Öneri) ise eski mantık devam
+    // Şablon (Öneri) ise eski mantık (API'ye post et ve listeyi yenile)
     if (item.is_template) {
         try { 
             await request('/api/products', { 
@@ -520,25 +508,28 @@ const toggleStatus = async (item: any) => {
         return 
     }
 
-    // Normal Ürün Durumu
     const newStatus = !item.is_purchased
     
-    // 1. Hafızadaki (allItems) ürünü bul ve güncelle
-    const targetIndex = (allItems.value || []).findIndex(i => i.id === item.id)
+    // 1. Dizi içindeki İNDEKSİ bul
+    const index = (allItems.value || []).findIndex(i => i.id === item.id)
     
-    if (targetIndex !== -1) {
-        // Doğrudan dizinin içindeki objeyi güncelliyoruz
-        allItems.value[targetIndex].is_purchased = newStatus
+    if (index !== -1) {
+        // --- KRİTİK GÜNCELLEME ---
+        // Objeyi sadece değiştirmek yetmeyebilir, kopyasını oluşturup yerine koyuyoruz.
+        // Bu işlem Vue'nun "Reactive" sistemini %100 tetikler.
+        const updatedItem = { ...allItems.value[index], is_purchased: newStatus }
         
-        // --- KRİTİK NOKTA ---
-        // ShallowRef kullandığımız için Vue'ya "Bak dizi değişti, her şeyi yeniden hesapla" diyoruz.
-        triggerRef(allItems) 
+        // Dizinin o elemanını yeni kopyayla değiştir
+        allItems.value[index] = updatedItem
         
-        // LocalStorage güncelle
+        // Vue'ya "Dizi değişti" diye bağır
+        triggerRef(allItems)
+        
+        // Cache'i güncelle
         safeStorage.set(CACHE_KEY, allItems.value)
     }
 
-    // 2. API İsteği (Arka planda)
+    // 2. API İsteği (Arka Planda)
     try { 
         await request(`/api/products/${item.id}`, { 
             method: 'PUT', 
@@ -546,14 +537,16 @@ const toggleStatus = async (item: any) => {
         })
         if(newStatus) Swal.mixin({ toast: true, position: 'center', showConfirmButton: false, timer: 1500 }).fire({ icon: 'success', title: 'Harika!' }) 
     } catch (e) { 
-        // Hata olursa işlemi geri al
-        if (targetIndex !== -1) {
-            allItems.value[targetIndex].is_purchased = !newStatus
+        // Hata olursa geri al (Aynı mantıkla)
+        if (index !== -1) {
+            const revertedItem = { ...allItems.value[index], is_purchased: !newStatus }
+            allItems.value[index] = revertedItem
             triggerRef(allItems)
         }
-        fetchList(true)
+        fetchList(true) // Garanti olsun diye listeyi çek
     }
 }
+
 
 const recommendItem = async (item: any) => {
   const { value: text } = await Swal.fire({ 
