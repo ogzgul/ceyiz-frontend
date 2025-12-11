@@ -212,6 +212,19 @@
 
             </div>
         </div>
+
+        <div ref="loadMoreTrigger" class="h-10 w-full flex items-center justify-center mt-4">
+    
+    <div v-if="loadingMore" class="flex items-center gap-2 text-rose-500 text-sm font-bold">
+        <div class="w-4 h-4 border-2 border-rose-200 border-t-rose-500 rounded-full animate-spin"></div>
+        Yükleniyor...
+    </div>
+
+    <div v-else-if="myItems.length > 0 && myItems.length >= totalItems" class="text-xs text-gray-300">
+        Tüm ürünler görüntülendi.
+    </div>
+
+</div>
       </div>
 
     </div>
@@ -239,6 +252,15 @@ const showNotifications = ref(false)
 const notifications = ref<any[]>([])
 
 
+// --- DEĞİŞKENLER (Script başına ekle) ---
+const page = ref(1)
+const pageSize = ref(30) // 10'ar 10'ar gelecek
+const totalItems = ref(0)
+const loadingMore = ref(false) // Alttaki küçük loader için
+const loadMoreTrigger = ref<HTMLElement | null>(null) // HTML'deki görünmez element
+let observer: IntersectionObserver | null = null
+
+
 // Yardımcı Fonksiyonlar
 const getInitials = (name: string) => name ? name.substring(0, 2).toUpperCase() : '?'
 const formatDate = (dateString: string) => new Date(dateString).toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })
@@ -253,53 +275,92 @@ const ensureLoggedIn = async () => {
   return true
 }
 // fetchList fonksiyonunun içi:
-const fetchList = async () => {
-  loading.value = true
+// --- GÜNCELLENEN FETCHLIST ---
+// reset=true : Tab veya kategori değişince listeyi silip baştan çeker
+// reset=false: Scroll yaptıkça altına ekler
+const fetchList = async (reset = true) => {
+  // Eğer reset isteniyorsa veya daha fazla veri yoksa/yükleniyorsa dur
+  if (!reset && (loading.value || loadingMore.value || myItems.value.length >= totalItems.value)) return
+
+  if (reset) {
+    loading.value = true
+    page.value = 1
+    myItems.value = []
+  } else {
+    loadingMore.value = true
+    page.value++
+  }
+
   try {
     const ok = await ensureLoggedIn()
     if (!ok) return
 
-    // 1. Ürünleri Çek
-    const res: any = await request('/api/products?sort=createdAt:desc', { method: 'GET' })
-    let rawList = res?.data ?? []
-
-    // --- YENİ EKLENEN KISIM BAŞLANGIÇ ---
-    // 2. Benim tavsiyelerimi çek ve eşleştir
-    try {
-       const recRes: any = await request('/api/recommendations', {
-          method: 'GET',
-          query: {
-             'filters[user][id][$eq]': user.value.id,
-             'populate': 'product'
-          }
-       })
-       const myRecs = recRes.data || []
-       
-       // Ürün listesinde dön ve eğer tavsiyem varsa ID'sini ekle
-       rawList = rawList.map((prod: any) => {
-          const rec = myRecs.find((r: any) => r.product?.id === prod.id)
-          return { ...prod, my_recommendation_id: rec ? rec.id : null }
-       })
-    } catch (err) {
-       console.log('Tavsiye kontrolü hatası:', err)
+    // Backend'e gidecek filtreler
+    const queryParams: any = {
+      'sort': 'createdAt:desc',
+      'pagination[page]': page.value,
+      'pagination[pageSize]': pageSize.value,
+      // Backend controller'a uygun filtreler:
+      'filters[is_purchased][$eq]': activeTab.value === 'alinanlar' 
     }
-    // --- YENİ EKLENEN KISIM BİTİŞ ---
 
-    rawList.sort((a: any, b: any) => {
-      if (a.is_template && !b.is_template) return 1
-      if (!a.is_template && b.is_template) return -1
-      return 0
+    // Kategori Seçiliyse filtreye ekle
+    if (selectedCategory.value !== 'Tümü') {
+      queryParams['filters[category][$eq]'] = selectedCategory.value
+    }
+
+    const res: any = await request('/api/products', { 
+      method: 'GET',
+      query: queryParams 
     })
 
-    myItems.value = rawList
-    fetchNotifications()
+    let newItems = res?.data ?? []
+    
+    // Toplam sayıyı al
+    if (res?.meta?.pagination) {
+      totalItems.value = res.meta.pagination.total
+    }
+
+    // --- TAVSİYE EŞLEŞTİRME (Senin kodun aynen kalsın) ---
+    try {
+       const productIds = newItems.map((p: any) => p.id)
+       if (productIds.length > 0) {
+         const recRes: any = await request('/api/recommendations', {
+            method: 'GET',
+            query: {
+               'filters[user][id][$eq]': user.value.id,
+               'filters[product][id][$in]': productIds, 
+               'populate': 'product'
+            }
+         })
+         const myRecs = recRes.data || []
+         newItems = newItems.map((prod: any) => {
+           const rec = myRecs.find((r: any) => r.product?.id === prod.id)
+           return { ...prod, my_recommendation_id: rec ? rec.id : null }
+         })
+       }
+    } catch (err) { console.log('Tavsiye hatası:', err) }
+    // ----------------------------------------------------
+
+    if (reset) {
+      myItems.value = newItems
+      fetchNotifications() // Sadece ilk girişte bildirim çek
+    } else {
+      myItems.value = [...myItems.value, ...newItems] // Altına ekle
+    }
 
   } catch (e: any) {
     console.error('Liste Hatası:', e)
   } finally {
     loading.value = false
+    loadingMore.value = false
   }
 }
+
+// --- WATCHER'LAR (Tab veya Kategori değişince listeyi sıfırla) ---
+watch([activeTab, selectedCategory], () => {
+  fetchList(true)
+})
 
 // 2. BİLDİRİM ÇEKME (DÜZELTME 2: 500 Hatası için Sorgu Yapısı Değiştirildi)
 const fetchNotifications = async () => {
@@ -396,9 +457,40 @@ const alacaklar = computed(() => {
     return true
   })
 })
-const currentList = computed(() => (activeTab.value === 'alacaklar' ? alacaklar.value : alinanlar.value))
-const totalAlacakAmount = computed(() => alacaklar.value.reduce((sum, item) => sum + (Number(item.price) || 0), 0))
-const totalHarcananAmount = computed(() => alinanlar.value.reduce((sum, item) => sum + (Number(item.price) || 0), 0))
+const currentList = computed(() => myItems.value)
+
+// Toplam tutarlar (Sadece ekranda yüklü olanları toplar)
+const totalAlacakAmount = computed(() => {
+    // Eğer 'alacaklar' tabındaysak hepsi alacaktır, değilse hiçbiri
+    if (activeTab.value === 'alinanlar') return 0
+    return myItems.value.reduce((sum, item) => sum + (Number(item.price) || 0), 0)
+})
+
+const totalHarcananAmount = computed(() => {
+    // Eğer 'alinanlar' tabındaysak hepsi alınmıştır
+    if (activeTab.value === 'alacaklar') return 0
+    return myItems.value.reduce((sum, item) => sum + (Number(item.price) || 0), 0)
+})
+
+onMounted(() => {
+  fetchList(true)
+  
+  // Sonsuz kaydırma tetikleyicisi
+  observer = new IntersectionObserver((entries) => {
+    if (entries[0].isIntersecting) {
+      fetchList(false) // False = Ekleme yap
+    }
+  }, { threshold: 0.5 }) // Yarısı görününce tetikle
+
+  // trigger element dom'da oluşunca izlemeye başla
+  setTimeout(() => {
+    if (loadMoreTrigger.value) observer?.observe(loadMoreTrigger.value)
+  }, 500)
+})
+
+onUnmounted(() => {
+  if (observer) observer.disconnect()
+})
 
 const openEditModal = async (item: any) => {
   const categories = ['Hazırlık','Mutfak', 'Salon', 'Yatak Odası', 'Elektronik', 'Banyo', 'Diğer']
