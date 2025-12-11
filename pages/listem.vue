@@ -241,6 +241,21 @@
 import Swal from 'sweetalert2'
 import { shallowRef, triggerRef, computed, ref, onMounted, watch, onUnmounted } from 'vue'
 
+// Script'in en üstüne, importların altına ekle:
+const saveToCache = (data: any) => {
+    if (import.meta.client) { // Sadece tarayıcıdaysa çalıştır
+        localStorage.setItem(CACHE_KEY, JSON.stringify(data))
+    }
+}
+
+const getFromCache = () => {
+    if (import.meta.client) {
+        return localStorage.getItem(CACHE_KEY)
+    }
+    return null
+}
+
+
 const { request } = apiUse()
 const { user, me } = useAuth()
 const config = useRuntimeConfig()
