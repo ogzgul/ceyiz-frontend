@@ -853,5 +853,4 @@ const removeRecommendation = async (item: any) => {
     }
 }
 
-onMounted(fetchList)
 </script>
