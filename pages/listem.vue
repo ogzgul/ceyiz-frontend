@@ -237,7 +237,6 @@
     </div>
   </div>
 </template>
-
 <script setup lang="ts">
 import Swal from 'sweetalert2'
 import { shallowRef, triggerRef, computed, ref, onMounted, watch, onUnmounted } from 'vue'
@@ -247,7 +246,7 @@ const { user, me } = useAuth()
 const config = useRuntimeConfig()
 const jwtCookie = useCookie('jwt') 
 
-// --- GÜVENLİ STORAGE (Netlify/SSR Hatasını Önler) ---
+// --- GÜVENLİ STORAGE ---
 const safeStorage = {
     get: (key: string) => {
         if (typeof window !== 'undefined' && window.localStorage) {
@@ -279,7 +278,6 @@ const loadMoreTrigger = ref<HTMLElement | null>(null)
 const showNotifications = ref(false)
 const notifications = ref<any[]>([])
 
-// HATA ÇÖZÜMÜ 4: Template içinde filtreleme yapmak yerine computed property kullanıyoruz
 const unreadCount = computed(() => {
     return (notifications.value || []).filter(n => n && !n.read).length
 })
@@ -291,7 +289,6 @@ onMounted(() => {
     const cached = safeStorage.get(CACHE_KEY)
     if (cached) {
         try {
-            // HATA ÇÖZÜMÜ 5: JSON parse sonrası varsayılan boş dizi ata
             allItems.value = JSON.parse(cached) || []
             loading.value = false
         } catch (e) { console.error('Cache hatası', e) }
@@ -317,7 +314,6 @@ onUnmounted(() => {
 })
 
 const loadMoreDisplay = () => {
-    // HATA ÇÖZÜMÜ 6: filteredPool varlığını kontrol et
     const pool = filteredPool.value || []
     if (displayLimit.value < pool.length) {
         displayLimit.value += 20
@@ -326,7 +322,6 @@ const loadMoreDisplay = () => {
 
 // --- FILTERING ---
 const filteredPool = computed(() => {
-    // HATA ÇÖZÜMÜ 7: allItems.value undefined gelirse boş dizi kullan
     let list = allItems.value || []
     
     const isPurchased = activeTab.value === 'alinanlar'
@@ -352,31 +347,16 @@ watch([activeTab, selectedCategory], () => {
     displayLimit.value = 20
 })
 
-// Hesaplamalar (Güvenli)// --- Script içindeki "Hesaplamalar" kısmını bununla değiştir ---
+// --- HESAPLAMALAR (Artık %100 Çalışır) ---
+// Not: shallowRef kullandığımız için computed'ların tetiklenmesi array referansının değişmesine bağlıdır.
+// Aşağıdaki CRUD işlemlerinde array referansını değiştirdiğimiz için burası anlık güncellenir.
+const alacaklar = computed(() => (allItems.value || []).filter(i => i && !i.is_purchased)) 
+const alinanlar = computed(() => (allItems.value || []).filter(i => i && i.is_purchased))
 
-// Güvenli liste erişimi
-const safeItems = computed(() => allItems.value || [])
+const totalAlacakAmount = computed(() => alacaklar.value.reduce((sum, item) => sum + (Number(item.price)||0), 0))
+const totalHarcananAmount = computed(() => alinanlar.value.reduce((sum, item) => sum + (Number(item.price)||0), 0))
+const totalItems = computed(() => (allItems.value || []).length) 
 
-// Listeleri ayır (Template için)
-const alacaklar = computed(() => safeItems.value.filter(i => i && !i.is_purchased)) 
-const alinanlar = computed(() => safeItems.value.filter(i => i && i.is_purchased))
-
-// --- DÜZELTME BURADA ---
-// Toplam tutarları doğrudan ana liste üzerinden hesaplıyoruz.
-// Bu yöntem shallowRef ile daha uyumludur ve anlık güncellenir.
-const totalAlacakAmount = computed(() => {
-    return (allItems.value || [])
-        .filter(i => i && !i.is_purchased)
-        .reduce((sum, item) => sum + (Number(item.price) || 0), 0)
-})
-
-const totalHarcananAmount = computed(() => {
-    return (allItems.value || [])
-        .filter(i => i && i.is_purchased)
-        .reduce((sum, item) => sum + (Number(item.price) || 0), 0)
-})
-
-const totalItems = computed(() => safeItems.value.length)
 
 // --- DATA FETCHING ---
 const fetchList = async (reset = true) => {
@@ -425,7 +405,6 @@ const fetchList = async (reset = true) => {
 
         fetchedData = await enrichWithRecommendations(fetchedData)
         allItems.value = fetchedData || []
-        triggerRef(allItems)
         
         if (meta && meta.pageCount > 1) {
             for (let p = 2; p <= meta.pageCount; p++) {
@@ -433,8 +412,9 @@ const fetchList = async (reset = true) => {
                 const nextRes: any = await request('/api/products', { method: 'GET', query: nextQuery })
                 let nextItems = nextRes?.data ?? []
                 nextItems = await enrichWithRecommendations(nextItems)
-                allItems.value = [...(allItems.value || []), ...nextItems]
-                triggerRef(allItems) 
+                
+                // Yeni referans oluşturarak ekleme yap (Reactivity Garantisi)
+                allItems.value = [...allItems.value, ...nextItems]
             }
         }
 
@@ -493,21 +473,21 @@ const fetchNotifications = async () => {
 const toggleNotifications = () => showNotifications.value = !showNotifications.value
 
 
-// --- CRUD ---
+// --- CRUD (DÜZELTİLMİŞ) ---
 
 const deleteItem = async (id: number) => {
   if(confirm('Silinsin mi?')) { 
-      allItems.value = (allItems.value || []).filter(i => i.id !== id)
-      triggerRef(allItems)
+      // Array Referansını Değiştir (Reactivity Tetikler)
+      allItems.value = allItems.value.filter(i => i.id !== id)
       safeStorage.set(CACHE_KEY, allItems.value) 
 
       try { await request(`/api/products/${id}`, { method: 'DELETE' }); } 
       catch(e) { fetchList(true) }
   }
 }
-// --- listem.vue içindeki toggleStatus fonksiyonunu bununla değiştir ---
+
 const toggleStatus = async (item: any) => {
-    // Şablon (Öneri) ise eski mantık devam
+    // Şablon (Öneri) ise eski mantık
     if (item.is_template) {
         try { 
             await request('/api/products', { 
@@ -520,25 +500,24 @@ const toggleStatus = async (item: any) => {
         return 
     }
 
-    // Normal Ürün Durumu
     const newStatus = !item.is_purchased
     
-    // 1. Hafızadaki (allItems) ürünü bul ve güncelle
-    const targetIndex = (allItems.value || []).findIndex(i => i.id === item.id)
+    // --- KRİTİK DÜZELTME: IMMUTABLE UPDATE ---
+    const index = (allItems.value || []).findIndex(i => i.id === item.id)
     
-    if (targetIndex !== -1) {
-        // Doğrudan dizinin içindeki objeyi güncelliyoruz
-        allItems.value[targetIndex].is_purchased = newStatus
+    if (index !== -1) {
+        // Dizinin bir kopyasını al
+        const newArray = [...allItems.value]
+        // İlgili elemanın bir kopyasını al ve durumu güncelle
+        newArray[index] = { ...newArray[index], is_purchased: newStatus }
         
-        // --- KRİTİK NOKTA ---
-        // ShallowRef kullandığımız için Vue'ya "Bak dizi değişti, her şeyi yeniden hesapla" diyoruz.
-        triggerRef(allItems) 
+        // Diziyi komple değiştir (Bu, computed değerleri ZORLA günceller)
+        allItems.value = newArray
         
-        // LocalStorage güncelle
         safeStorage.set(CACHE_KEY, allItems.value)
     }
 
-    // 2. API İsteği (Arka planda)
+    // API İsteği
     try { 
         await request(`/api/products/${item.id}`, { 
             method: 'PUT', 
@@ -546,10 +525,11 @@ const toggleStatus = async (item: any) => {
         })
         if(newStatus) Swal.mixin({ toast: true, position: 'center', showConfirmButton: false, timer: 1500 }).fire({ icon: 'success', title: 'Harika!' }) 
     } catch (e) { 
-        // Hata olursa işlemi geri al
-        if (targetIndex !== -1) {
-            allItems.value[targetIndex].is_purchased = !newStatus
-            triggerRef(allItems)
+        // Hata olursa geri al
+        if (index !== -1) {
+            const revertedArray = [...allItems.value]
+            revertedArray[index] = { ...revertedArray[index], is_purchased: !newStatus }
+            allItems.value = revertedArray
         }
         fetchList(true)
     }
@@ -571,12 +551,16 @@ const recommendItem = async (item: any) => {
             method: 'POST', 
             body: { data: { comment: text, product: item.id } } 
         })
-        const target = (allItems.value || []).find(i => i.id === item.id)
-        if(target) {
-            target.my_recommendation_id = res.data?.id || res.id
-            triggerRef(allItems)
+        
+        // Immutable Update
+        const index = allItems.value.findIndex(i => i.id === item.id)
+        if(index !== -1) {
+            const newArray = [...allItems.value]
+            newArray[index] = { ...newArray[index], my_recommendation_id: res.data?.id || res.id }
+            allItems.value = newArray
             safeStorage.set(CACHE_KEY, allItems.value)
         }
+
         Swal.fire({ toast: true, position: 'center', icon: 'success', title: 'Paylaşıldı!', showConfirmButton: false, timer: 2000 }) 
     } catch (e) { Swal.fire('Hata', 'Paylaşım yapılamadı.', 'error') } 
   }
@@ -588,12 +572,16 @@ const removeRecommendation = async (item: any) => {
     if (confirm.isConfirmed) {
         try {
             await request(`/api/recommendations/${item.my_recommendation_id}`, { method: 'DELETE' })
-            const target = (allItems.value || []).find(i => i.id === item.id)
-            if(target) {
-                target.my_recommendation_id = null
-                triggerRef(allItems)
+            
+            // Immutable Update
+            const index = allItems.value.findIndex(i => i.id === item.id)
+            if(index !== -1) {
+                const newArray = [...allItems.value]
+                newArray[index] = { ...newArray[index], my_recommendation_id: null }
+                allItems.value = newArray
                 safeStorage.set(CACHE_KEY, allItems.value)
             }
+            
             Swal.mixin({ toast: true, position: 'center', showConfirmButton: false, timer: 1500 }).fire({ icon: 'success', title: 'Silindi' })
         } catch (e) { Swal.fire('Hata', 'Silinemedi.', 'error') }
     }
@@ -670,16 +658,21 @@ const openEditModal = async (item: any) => {
       body: { data: { title: values.title, category: values.category, imageUrl: values.imageUrl, image: uploadedImageId, price: price, link: values.link || null, is_purchased: !!values.is_purchased } },
     })
 
-    const target = (allItems.value || []).find(i => i.id === item.id)
-    if(target) {
-        target.title = values.title
-        target.category = values.category
-        target.price = price
-        target.imageUrl = values.imageUrl
-        target.is_purchased = !!values.is_purchased
+    // UI Güncelle (Immutable)
+    const index = allItems.value.findIndex(i => i.id === item.id)
+    if(index !== -1) {
+        const newArray = [...allItems.value]
+        newArray[index] = { 
+            ...newArray[index], 
+            title: values.title,
+            category: values.category,
+            price: price,
+            imageUrl: values.imageUrl,
+            is_purchased: !!values.is_purchased
+        }
+        allItems.value = newArray
+        safeStorage.set(CACHE_KEY, allItems.value)
     }
-    triggerRef(allItems)
-    safeStorage.set(CACHE_KEY, allItems.value)
 
     Swal.mixin({ toast: true, position: 'bottom-end', showConfirmButton: false, timer: 2000 }).fire({ icon: 'success', title: 'Güncellendi' })
   } catch (e: any) { Swal.fire('Hata', `Güncelleme hatası: ${e.message}`, 'error') }
@@ -765,6 +758,10 @@ const openAddModal = async () => {
       body: { data: { title: values.title, category: values.category, imageUrl: values.imageUrl, image: uploadedImageId, price: price, link: values.link || null, is_purchased: !!values.is_purchased, is_template: false } },
     })
     
+    // Ekleme sonrası: Manuel Ekleme (Refresh yapmadan)
+    // ID için API cevabı olmadığı için (await request dönüşü res değişkenine alınmadı)
+    // En temiz yol listeyi yenilemektir ama kullanıcı deneyimi için manuel de ekleyebiliriz.
+    // Şimdilik fetchList(true) en güvenlisi.
     await fetchList(true) 
     
     Swal.mixin({ toast: true, position: 'bottom-end', showConfirmButton: false, timer: 2000 }).fire({ icon: 'success', title: 'Eklendi' })
@@ -782,7 +779,6 @@ const formatDate = (dateString: string) => new Date(dateString).toLocaleDateStri
 const formatPrice = (price: number) => new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY' }).format(price)
 
 </script>
-
 <style scoped>
 .animate-fade-in-up {
   animation: fadeInUp 0.5s ease-out;
