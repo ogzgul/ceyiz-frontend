@@ -65,7 +65,7 @@
             <div class="flex gap-4">
                <div class="w-24 h-24 flex-shrink-0 bg-gray-50 rounded-xl border border-gray-100 overflow-hidden relative">
                   <img v-if="rec.product.imageUrl" :src="rec.product.imageUrl" class="w-full h-full object-cover" onerror="this.style.display='none'">
-                  <img v-else-if="rec.product.image?.url" :src="config.public.apiBase.replace('/api','') + rec.product.image.url" class="w-full h-full object-cover">
+                  <img  v-else-if="rec.product.image?.url" :src="rec.product.image.url"  class="w-full h-full object-cover"/>
                   <div v-else class="w-full h-full flex items-center justify-center text-gray-300"><i class="fas fa-image text-2xl"></i></div>
                </div>
                <div class="flex-1">
