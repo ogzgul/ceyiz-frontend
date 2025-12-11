@@ -352,14 +352,31 @@ watch([activeTab, selectedCategory], () => {
     displayLimit.value = 20
 })
 
-// Hesaplamalar (Güvenli)
+// Hesaplamalar (Güvenli)// --- Script içindeki "Hesaplamalar" kısmını bununla değiştir ---
+
+// Güvenli liste erişimi
 const safeItems = computed(() => allItems.value || [])
+
+// Listeleri ayır (Template için)
 const alacaklar = computed(() => safeItems.value.filter(i => i && !i.is_purchased)) 
 const alinanlar = computed(() => safeItems.value.filter(i => i && i.is_purchased))
-const totalAlacakAmount = computed(() => alacaklar.value.reduce((sum, item) => sum + (Number(item.price)||0), 0))
-const totalHarcananAmount = computed(() => alinanlar.value.reduce((sum, item) => sum + (Number(item.price)||0), 0))
-const totalItems = computed(() => safeItems.value.length)
 
+// --- DÜZELTME BURADA ---
+// Toplam tutarları doğrudan ana liste üzerinden hesaplıyoruz.
+// Bu yöntem shallowRef ile daha uyumludur ve anlık güncellenir.
+const totalAlacakAmount = computed(() => {
+    return (allItems.value || [])
+        .filter(i => i && !i.is_purchased)
+        .reduce((sum, item) => sum + (Number(item.price) || 0), 0)
+})
+
+const totalHarcananAmount = computed(() => {
+    return (allItems.value || [])
+        .filter(i => i && i.is_purchased)
+        .reduce((sum, item) => sum + (Number(item.price) || 0), 0)
+})
+
+const totalItems = computed(() => safeItems.value.length)
 
 // --- DATA FETCHING ---
 const fetchList = async (reset = true) => {
@@ -488,8 +505,9 @@ const deleteItem = async (id: number) => {
       catch(e) { fetchList(true) }
   }
 }
-
+// --- listem.vue içindeki toggleStatus fonksiyonunu bununla değiştir ---
 const toggleStatus = async (item: any) => {
+    // Şablon (Öneri) ise eski mantık devam
     if (item.is_template) {
         try { 
             await request('/api/products', { 
@@ -502,14 +520,25 @@ const toggleStatus = async (item: any) => {
         return 
     }
 
+    // Normal Ürün Durumu
     const newStatus = !item.is_purchased
-    const target = (allItems.value || []).find(i => i.id === item.id)
-    if (target) {
-        target.is_purchased = newStatus
-        triggerRef(allItems)
+    
+    // 1. Hafızadaki (allItems) ürünü bul ve güncelle
+    const targetIndex = (allItems.value || []).findIndex(i => i.id === item.id)
+    
+    if (targetIndex !== -1) {
+        // Doğrudan dizinin içindeki objeyi güncelliyoruz
+        allItems.value[targetIndex].is_purchased = newStatus
+        
+        // --- KRİTİK NOKTA ---
+        // ShallowRef kullandığımız için Vue'ya "Bak dizi değişti, her şeyi yeniden hesapla" diyoruz.
+        triggerRef(allItems) 
+        
+        // LocalStorage güncelle
         safeStorage.set(CACHE_KEY, allItems.value)
     }
 
+    // 2. API İsteği (Arka planda)
     try { 
         await request(`/api/products/${item.id}`, { 
             method: 'PUT', 
@@ -517,7 +546,11 @@ const toggleStatus = async (item: any) => {
         })
         if(newStatus) Swal.mixin({ toast: true, position: 'center', showConfirmButton: false, timer: 1500 }).fire({ icon: 'success', title: 'Harika!' }) 
     } catch (e) { 
-        if(target) target.is_purchased = !newStatus 
+        // Hata olursa işlemi geri al
+        if (targetIndex !== -1) {
+            allItems.value[targetIndex].is_purchased = !newStatus
+            triggerRef(allItems)
+        }
         fetchList(true)
     }
 }
