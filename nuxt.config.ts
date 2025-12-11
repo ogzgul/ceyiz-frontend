@@ -17,6 +17,11 @@ export default defineNuxtConfig({
       ]
     }
   },
-
+routeRules: {
+    // '/listem' sayfasında SSR (Sunucu Tarafı Render) kapatıldı.
+    // Bu sayfa artık sadece tarayıcıda çalışır, Netlify sunucusunu asla yormaz/çökertmez.
+    '/listem': { ssr: false },
+    '/oneriler': { ssr: false } 
+  },
   compatibilityDate: '2024-12-05'
 })
