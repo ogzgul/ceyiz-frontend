@@ -13,6 +13,30 @@
             <i class="fas fa-sync-alt mr-1"></i> Güncelle
         </button>
       </div>
+
+      <div class="px-4 pb-3 pt-1 overflow-x-auto scrollbar-hide">
+          <div class="flex gap-2 w-max">
+              <button 
+                  @click="selectedCategory = 'Tümü'"
+                  class="px-4 py-1.5 rounded-full text-xs font-bold transition-all duration-300 border"
+                  :class="selectedCategory === 'Tümü' 
+                      ? 'bg-gray-800 text-white border-gray-800 shadow-md transform scale-105' 
+                      : 'bg-white text-gray-500 border-gray-200 hover:border-rose-200 hover:text-rose-500'">
+                  Tümü
+              </button>
+              
+              <button 
+                  v-for="(items, catName) in mockSuggestions" 
+                  :key="catName"
+                  @click="selectedCategory = catName"
+                  class="px-4 py-1.5 rounded-full text-xs font-bold transition-all duration-300 border"
+                  :class="selectedCategory === catName 
+                      ? 'bg-gray-800 text-white border-gray-800 shadow-md transform scale-105' 
+                      : 'bg-white text-gray-500 border-gray-200 hover:border-rose-200 hover:text-rose-500'">
+                  {{ catName }}
+              </button>
+          </div>
+      </div>
     </nav>
 
     <div class="max-w-3xl mx-auto px-4 py-6 space-y-8">
@@ -24,62 +48,67 @@
              <i class="fas fa-clipboard-list absolute inset-0 flex items-center justify-center text-rose-500 text-xl"></i>
          </div>
          <span class="text-sm font-medium text-gray-500">Listeniz hazırlanıyor...</span>
-         <span class="text-xs text-gray-400 mt-1">Bu işlem sadece ilk açılışta yapılır.</span>
       </div>
 
-      <div v-else v-for="(items, category) in mockSuggestions" :key="category" class="animate-fade-in-up">
-        
-        <h2 class="text-lg font-extrabold text-gray-800 mb-3 flex items-center gap-2 sticky top-16 bg-gray-50/95 backdrop-blur py-2 z-10 pl-1">
-            <span class="w-1 h-6 bg-rose-500 rounded-full"></span>
-            {{ category }}
-            <span class="text-xs font-normal text-gray-400 bg-white px-2 py-0.5 rounded-full border">
-                {{ items.length }} Öneri
-            </span>
-        </h2>
+      <div v-else>
+          
+          <div v-for="(items, category) in filteredSuggestions" :key="category" class="mb-8 animate-fade-in-up">
+            
+            <h2 class="text-lg font-extrabold text-gray-800 mb-3 flex items-center gap-2 sticky top-28 bg-gray-50/95 backdrop-blur py-2 z-10 pl-1 -mx-1 rounded-lg">
+                <span class="w-1 h-6 bg-rose-500 rounded-full"></span>
+                {{ category }}
+                <span class="text-xs font-normal text-gray-400 bg-white px-2 py-0.5 rounded-full border">
+                    {{ items.length }} Öneri
+                </span>
+            </h2>
 
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div v-for="item in items" :key="item.title" 
-                 class="bg-white p-4 rounded-2xl shadow-sm border transition-all duration-300 relative overflow-hidden group/card"
-                 :class="getStatus(item.title).exists ? 'border-green-200 bg-green-50/30' : 'border-gray-100 hover:border-rose-200'">
-                
-                <div class="flex justify-between items-start">
-                    <div>
-                        <h3 class="font-bold text-gray-800">{{ item.title }}</h3>
-                        <p class="text-xs text-gray-400 mt-0.5">Ortalama: {{ item.avgPrice }}</p>
-                    </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div v-for="item in items" :key="item.title" 
+                     class="bg-white p-4 rounded-2xl shadow-sm border transition-all duration-300 relative overflow-hidden group/card"
+                     :class="getStatus(item.title).exists ? 'border-green-200 bg-green-50/30' : 'border-gray-100 hover:border-rose-200'">
                     
-                    <div v-if="getStatus(item.title).exists" class="w-8 h-8 rounded-full bg-green-100 text-green-600 flex items-center justify-center shadow-sm animate-bounce-short">
-                        <i class="fas fa-check"></i>
-                    </div>
-                    <div v-else class="w-8 h-8 rounded-full bg-gray-100 text-gray-400 flex items-center justify-center group-hover/card:bg-rose-50 group-hover/card:text-rose-500 transition">
-                        <i class="fas fa-lightbulb"></i>
-                    </div>
-                </div>
-
-                <div class="mt-4 pt-3 border-t border-gray-100/50 flex flex-col gap-2">
-                    
-                    <div v-if="getStatus(item.title).exists" class="text-xs text-orange-600 bg-orange-50 font-medium flex items-start gap-2 p-2 rounded-lg border border-orange-100">
-                        <i class="fas fa-exclamation-circle mt-0.5"></i>
+                    <div class="flex justify-between items-start">
                         <div>
-                            Listende benzer ürün var:<br>
-                            <span class="font-bold text-orange-800">{{ getStatus(item.title).matchName }}</span>
+                            <h3 class="font-bold text-gray-800">{{ item.title }}</h3>
+                            <p class="text-xs text-gray-400 mt-0.5">Ortalama: {{ item.avgPrice }}</p>
+                        </div>
+                        
+                        <div v-if="getStatus(item.title).exists" class="w-8 h-8 rounded-full bg-green-100 text-green-600 flex items-center justify-center shadow-sm animate-bounce-short">
+                            <i class="fas fa-check"></i>
+                        </div>
+                        <div v-else class="w-8 h-8 rounded-full bg-gray-100 text-gray-400 flex items-center justify-center group-hover/card:bg-rose-50 group-hover/card:text-rose-500 transition">
+                            <i class="fas fa-lightbulb"></i>
                         </div>
                     </div>
 
-                    <button @click="openAddModal(item)" 
-                            class="w-full py-2.5 font-bold rounded-xl text-xs transition flex items-center justify-center gap-2 group"
-                            :class="getStatus(item.title).exists 
-                                ? 'bg-orange-100 text-orange-600 hover:bg-orange-500 hover:text-white' 
-                                : 'bg-rose-50 text-rose-600 hover:bg-rose-500 hover:text-white'">
+                    <div class="mt-4 pt-3 border-t border-gray-100/50 flex flex-col gap-2">
                         
-                        <span>{{ getStatus(item.title).exists ? 'Yine de Ekle' : 'Listeme Ekle' }}</span>
-                        
-                        <i class="fas fa-plus group-hover:rotate-90 transition-transform"></i>
-                    </button>
+                        <div v-if="getStatus(item.title).exists" class="text-xs text-orange-600 bg-orange-50 font-medium flex items-start gap-2 p-2 rounded-lg border border-orange-100">
+                            <i class="fas fa-exclamation-circle mt-0.5"></i>
+                            <div>
+                                Listende benzer ürün var:<br>
+                                <span class="font-bold text-orange-800">{{ getStatus(item.title).matchName }}</span>
+                            </div>
+                        </div>
 
+                        <button @click="openAddModal(item)" 
+                                class="w-full py-2.5 font-bold rounded-xl text-xs transition flex items-center justify-center gap-2 group"
+                                :class="getStatus(item.title).exists 
+                                    ? 'bg-orange-100 text-orange-600 hover:bg-orange-500 hover:text-white' 
+                                    : 'bg-rose-50 text-rose-600 hover:bg-rose-500 hover:text-white'">
+                            <span>{{ getStatus(item.title).exists ? 'Yine de Ekle' : 'Listeme Ekle' }}</span>
+                            <i class="fas fa-plus group-hover:rotate-90 transition-transform"></i>
+                        </button>
+
+                    </div>
                 </div>
             </div>
-        </div>
+
+          </div>
+
+          <div v-if="Object.keys(filteredSuggestions).length === 0" class="text-center py-10 text-gray-400">
+              Bu kategoride henüz öneri yok.
+          </div>
 
       </div>
 
@@ -97,9 +126,12 @@ const jwtCookie = useCookie('jwt')
 
 const loading = ref(true)
 const myProducts = ref<any[]>([])
-const CACHE_KEY = 'my_ceyiz_products_cache' // LocalStorage Anahtarı
+const CACHE_KEY = 'my_ceyiz_products_cache' 
 
-// --- MOCK DATA: ÖNERİ LİSTESİ ---
+// Seçili Kategori State'i
+const selectedCategory = ref('Tümü')
+
+// --- MOCK DATA: ULTRA GENİŞLETİLMİŞ ÇEYİZ LİSTESİ ---
 const mockSuggestions = {
     'Hazırlık': [
         // Kesme & Doğrama
@@ -411,6 +443,16 @@ const mockSuggestions = {
     ]
 }
 
+// FİLTRELEME MANTIĞI (COMPUTED)
+const filteredSuggestions = computed(() => {
+    if (selectedCategory.value === 'Tümü') {
+        return mockSuggestions
+    } else {
+        // Sadece seçili kategoriyi içeren bir obje döndür
+        return { [selectedCategory.value]: mockSuggestions[selectedCategory.value] }
+    }
+})
+
 // 1. VERİ ÇEKME & CACHE MANTIĞI
 const initData = async (forceApi = false) => {
     loading.value = true
@@ -441,8 +483,8 @@ const initData = async (forceApi = false) => {
         const res: any = await request('/api/products', {
             method: 'GET',
             query: {
-                'pagination[pageSize]': 1000, // Tüm ürünleri çek
-                'fields[0]': 'title',         // Sadece başlıklar (Performans)
+                'pagination[pageSize]': 1000, 
+                'fields[0]': 'title', 
                 'filters[user][id][$eq]': user.value.id
             }
         })
@@ -460,29 +502,22 @@ const initData = async (forceApi = false) => {
     }
 }
 
-// Sayfa açıldığında başlat
 onMounted(() => initData(false))
 
-// Kullanıcı elle güncellemek isterse
 const forceRefresh = () => {
     localStorage.removeItem(CACHE_KEY)
     initData(true)
 }
 
-// 2. AKILLI KARŞILAŞTIRMA (Türkçe Uyumlu)
+// 2. KARŞILAŞTIRMA MANTIĞI
 const getStatus = (suggestionTitle: string) => {
     const searchKey = suggestionTitle.toLocaleLowerCase('tr-TR').trim()
-    
     const match = myProducts.value.find(p => {
         if(!p.title) return false
         const myTitle = p.title.toLocaleLowerCase('tr-TR').trim()
-        // Fuzzy Match: "Blender" -> "Arzum Blender Seti" (Eşleşir)
         return myTitle.includes(searchKey) || searchKey.includes(myTitle)
     })
-
-    if (match) {
-        return { exists: true, matchName: match.title }
-    }
+    if (match) return { exists: true, matchName: match.title }
     return { exists: false, matchName: '' }
 }
 
@@ -561,6 +596,7 @@ const openAddModal = async (suggestion: any) => {
       const link = (document.getElementById('sw-link') as HTMLInputElement)?.value?.trim()
 
       if (!title) { Swal.showValidationMessage('Ürün adı giriniz'); return }
+      
       const file = fileInput.files?.length ? fileInput.files[0] : null
       return { title, category, imageUrl, file, priceRaw, link }
     }
@@ -573,7 +609,6 @@ const openAddModal = async (suggestion: any) => {
   try {
     let uploadedImageId = null
 
-    // Resim Upload
     if (values.file) {
         if (!jwtCookie.value) throw new Error("Oturum hatası")
         const formData = new FormData()
@@ -586,7 +621,6 @@ const openAddModal = async (suggestion: any) => {
         if (uploadRes && uploadRes[0]) uploadedImageId = uploadRes[0].id
     }
 
-    // Ürün Ekleme İsteği
     const price = values.priceRaw ? Number(values.priceRaw) : 0
     await request('/api/products', {
       method: 'POST',
@@ -604,12 +638,10 @@ const openAddModal = async (suggestion: any) => {
       },
     })
 
-    // --- KRİTİK: ANLIK UPDATE MANTIĞI ---
-    // API'den tekrar çekmek yerine, Cache'i ve State'i manuel güncelliyoruz.
-    // Bu sayede "Listende Var" yazısı ışık hızında çıkar.
+    // Anlık Güncelleme
     const newItem = { title: values.title }
-    myProducts.value.push(newItem) // State güncelle
-    localStorage.setItem(CACHE_KEY, JSON.stringify(myProducts.value)) // Cache güncelle
+    myProducts.value.push(newItem) 
+    localStorage.setItem(CACHE_KEY, JSON.stringify(myProducts.value)) 
     
     Swal.mixin({ toast: true, position: 'bottom-end', showConfirmButton: false, timer: 2000 })
         .fire({ icon: 'success', title: 'Listenize eklendi! 🎉' })
@@ -642,5 +674,13 @@ const openAddModal = async (suggestion: any) => {
 @keyframes bounceShort {
     0%, 100% { transform: translateY(0); }
     50% { transform: translateY(-5px); }
+}
+/* Scrollbar Gizleme */
+.scrollbar-hide::-webkit-scrollbar {
+    display: none;
+}
+.scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
 }
 </style>
