@@ -169,20 +169,18 @@
     </div>
   </div>
 </template>
-
 <script setup>
 import Swal from 'sweetalert2'
 
 const { request } = apiUse() 
-const { logout, jwt, user } = useAuth()
+const { logout, jwt, user, me } = useAuth() // 'me' fonksiyonunu da ekledik
 const router = useRouter()
 const config = useRuntimeConfig()
 
 const recommendations = ref([])
-const myProductTitles = ref(new Set()) // Kullanıcının ürün başlıklarını tutacağımız Set
+const myProductTitles = ref(new Set()) 
 const loading = ref(true)
 
-// Modal State
 const activeModalItem = ref(null)
 
 const getInitials = (name) => name ? name.substring(0, 2).toUpperCase() : '?'
@@ -198,28 +196,45 @@ const closeCommentModal = () => {
     document.body.style.overflow = 'auto'
 }
 
-// 1. KULLANICININ ÜRÜN LİSTESİNİ ÇEK
+// --- DÜZELTME: KULLANICI KONTROLÜ (Hydration Sorununu Çözer) ---
+const ensureUserLoaded = async () => {
+    // Eğer user state boşsa, token varsa me() ile kullanıcıyı çekmeye çalış
+    if (!user.value) {
+        try {
+            await me() 
+        } catch (e) {
+            // Token geçersizse veya yoksa login'e at
+            router.push('/login')
+            return false
+        }
+    }
+    // Token yoksa da login'e at
+    if (!user.value?.id) {
+        router.push('/login')
+        return false
+    }
+    return true
+}
+
 const fetchMyList = async () => {
     if (!user.value) return
     try {
-        // Sadece başlıkları çekmek performans için daha iyi olur ama Strapi v4'te select biraz karışıktır,
-        // şimdilik düz çekiyoruz.
         const res = await request('/api/products', { method: 'GET' })
         const products = res.data || []
-        
-        // Ürün başlıklarını küçük harfe çevirip Set'e atıyoruz (Hızlı arama için)
         myProductTitles.value = new Set(products.map(p => p.title.toLowerCase().trim()))
     } catch (e) {
         console.error('Kullanıcı listesi çekilemedi', e)
     }
 }
 
-// 2. ÖNERİLERİ ÇEK
 const fetchRecs = async () => {
-  //if (!jwt.value) return router.push('/login')
+  // Önce kullanıcının yüklendiğinden emin ol
+  const isReady = await ensureUserLoaded()
+  if (!isReady) return
+
+  loading.value = true // Loading'i burada başlatmak daha doğru
   
   try {
-    // Paralel olarak hem önerileri hem de kullanıcının listesini çekiyoruz
     const [recRes] = await Promise.all([
         request('/api/recommendations', { 
             method: 'GET',
@@ -228,17 +243,20 @@ const fetchRecs = async () => {
                 sort: ['createdAt:desc']
             }
         }),
-        fetchMyList() // Kullanıcının listesini de güncelle
+        fetchMyList() 
     ])
     
     recommendations.value = recRes.data
   } catch (e) {
     console.error(e)
+    // Eğer 401 hatası alırsak login'e atabiliriz
+    if(e.response?.status === 401) router.push('/login')
   } finally {
     loading.value = false
   }
 }
 
+// Sayfa yüklendiğinde çalıştır
 onMounted(fetchRecs)
 
 // --- YARDIMCI: ÜRÜN LİSTEMDE VAR MI? ---
@@ -328,14 +346,13 @@ const addToList = async (productData) => {
             category: productData.category,
             price: productData.price,
             imageUrl: productData.imageUrl,
-            link: productData.link,          
+            link: productData.link,           
             is_purchased: false,
             is_template: false,
           }
         }
       })
       
-      // Listeye ekler eklemez yerel listemizi güncelle
       myProductTitles.value.add(productData.title.toLowerCase().trim())
       
       Swal.mixin({ toast: true, position: 'top-end', showConfirmButton: false, timer: 1500 }).fire({ icon: 'success', title: 'Listene eklendi!' })
