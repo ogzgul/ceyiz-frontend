@@ -328,100 +328,99 @@ watch([activeTab, selectedCategory], () => {
 })
 
 // --- DATA FETCHING (API) ---
-// --- DATA FETCHING (LİMİTSİZ / ZİNCİRLEME ÇEKİM) ---
 const fetchList = async (reset = true) => {
-    // Reset istenmiyorsa (örn: sadece refresh butonuna basıldıysa) ve yükleme sürüyorsa dur
-    if (!reset && loading.value) return
+    if (!reset && (!hasMore.value || loadingMore.value)) return
 
     if (reset) {
-        // Cache boşsa loading göster, doluysa gösterme (arkada yenile)
-        if (allItems.value.length === 0) loading.value = true
+        if (myItems.value.length === 0) loading.value = true // Sadece cache boşsa loading göster
+        page.value = 1
+    } else {
+        loadingMore.value = true
+        page.value++
     }
 
     try {
         const ok = await ensureLoggedIn()
         if (!ok) return
 
-        // 1. İLK PARTİ İSTEĞİ (İlk 500 ürün)
-        // 500, tarayıcıyı yormadan hızlı cevap almak için ideal bir sayıdır.
-        const pageSizeLimit = 500 
-        
+        // 1. API İsteği (Kategori filtresi göndermiyoruz, hepsini alıp Client'ta süzüyoruz)
+        // Böylece kategori değiştirince tekrar yüklemeye gerek kalmıyor.
         const queryParams: any = {
             'sort': 'createdAt:desc',
-            'pagination[page]': 1,
-            'pagination[pageSize]': pageSizeLimit,
+            'pagination[page]': page.value,
+            'pagination[pageSize]': pageSize.value,
             'filters[user][id][$eq]': user.value.id
         }
 
         const res: any = await request('/api/products', { method: 'GET', query: queryParams })
+        let newItems = res?.data ?? []
         
-        let fetchedData = res?.data ?? []
-        const meta = res?.meta?.pagination
+        // Meta
+        if (res?.meta?.pagination) {
+            totalItems.value = res.meta.pagination.total
+            hasMore.value = newItems.length >= pageSize.value
+        } else { hasMore.value = false }
 
-        // --- TAVSİYE EŞLEŞTİRME (Yardımcı Fonksiyon) ---
-        const enrichWithRecommendations = async (items: any[]) => {
-            const pIds = items.map((p: any) => p.id)
-            if (pIds.length === 0) return items
-            
+        // 2. Tavsiye Eşleştirme
+        const productIds = newItems.map((p: any) => p.id)
+        if (productIds.length > 0) {
+             const recQuery: any = {
+                'pagination[pageSize]': productIds.length + 5,
+                'filters[user][id][$eq]': user.value.id,
+                'populate[product][fields][0]': 'id'
+            }
+            productIds.forEach((id: number, index: number) => {
+                recQuery[`filters[product][id][$in][${index}]`] = id
+            });
+
             try {
-                const recQuery: any = {
-                    'pagination[pageSize]': pIds.length + 50, // Tavsiyeleri de toplu çek
-                    'filters[user][id][$eq]': user.value.id,
-                    'populate[product][fields][0]': 'id'
-                }
-                pIds.forEach((id: number, idx: number) => {
-                    recQuery[`filters[product][id][$in][${idx}]`] = id
-                })
-                
                 const recRes: any = await request('/api/recommendations', { method: 'GET', query: recQuery })
                 const myRecs = recRes.data || []
-                
-                return items.map((prod: any) => {
+                newItems = newItems.map((prod: any) => {
                     const rec = myRecs.find((r: any) => r.product && String(r.product.id) === String(prod.id))
                     return { ...prod, my_recommendation_id: rec ? rec.id : null }
                 })
-            } catch(e) { return items }
+            } catch(e) { console.error(e) }
         }
 
-        // İlk partiyi eşleştir
-        fetchedData = await enrichWithRecommendations(fetchedData)
-
-        // İLK PARTİYİ EKRANA BAS (Kullanıcı bekletilmez)
-        allItems.value = fetchedData 
-        triggerRef(allItems)
-        
-        // 2. KALAN SAYFALARI ARKA PLANDA ÇEK (Zincirleme)
-        if (meta && meta.pageCount > 1) {
-            console.log(`📦 Toplam ${meta.total} ürün var. Kalan ${meta.pageCount - 1} sayfa arkada yükleniyor...`)
+        // 3. Merge & Cache Update
+        if (reset) {
+            // Reset'te: Gelen yeni verileri, cache'deki ESKİ (diğer sayfalardaki) verilerle birleştir.
+            // ID çakışmasını önle
+            const newIds = new Set(newItems.map(i => i.id))
+            const cachedOthers = myItems.value.filter(i => !newIds.has(i.id))
             
-            // Döngü ile diğer sayfaları çek
-            for (let p = 2; p <= meta.pageCount; p++) {
-                const nextQuery = { ...queryParams, 'pagination[page]': p }
-                const nextRes: any = await request('/api/products', { method: 'GET', query: nextQuery })
-                let nextItems = nextRes?.data ?? []
-                
-                // Gelen yeni paketi de tavsiyelerle eşleştir
-                nextItems = await enrichWithRecommendations(nextItems)
-                
-                // Listeye ekle (Append)
-                allItems.value = [...allItems.value, ...nextItems]
-                triggerRef(allItems) // Ekranı güncelle (Kullanıcı sayının arttığını görür)
+            // Sıralama bozulmaması için: Eğer sayfa 1 ise başa koy, değilse...
+            // En basiti: ID'ye göre merge etmek veya direkt replace etmek.
+            // Sayfalama düzgün çalışması için: Sayfa 1 ise, listenin başını güncelle.
+            
+            if (page.value === 1) {
+                // Sayfa 1: Yeniler + Eskilerin (bu sayfada olmayanları)
+                myItems.value = [...newItems, ...cachedOthers] 
+            } else {
+                // Reset ama sayfa > 1 (Nadir durum): Genelde sadece init'te reset=true olur.
+                myItems.value = [...cachedOthers, ...newItems]
             }
+        } else {
+            // Load More: Sona ekle
+            const existingIds = new Set(myItems.value.map(i => i.id))
+            const uniqueNew = newItems.filter(i => !existingIds.has(i.id))
+            myItems.value = [...myItems.value, ...uniqueNew]
         }
 
-        // 3. HEPSİ BİTİNCE CACHE GÜNCELLE
-        // Artık elimizde 1000, 2000, 5000 kaç ürün varsa hepsi var.
-        localStorage.setItem(CACHE_KEY, JSON.stringify(allItems.value))
+        triggerRef(myItems) // ShallowRef güncelleme
+        localStorage.setItem(CACHE_KEY, JSON.stringify(myItems.value))
         
-        // Bildirimleri tazele
         if (reset) fetchNotifications()
 
     } catch (e) {
-        console.error('Liste yükleme hatası', e)
+        console.error('Liste hatası', e)
     } finally {
         loading.value = false
+        loadingMore.value = false
     }
 }
+
 // --- NOTIFICATIONS ---
 const fetchNotifications = async () => {
     if (!user.value) return
