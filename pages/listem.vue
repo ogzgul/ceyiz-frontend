@@ -91,6 +91,24 @@
             <i class="fas fa-chevron-right text-gray-500 group-hover:text-white transition-colors pr-2"></i>
          </button>
       </div>
+      <div class="mb-6 overflow-x-auto pb-2 -mx-4 px-4 scrollbar-hide">
+        <div class="flex gap-2 w-max">
+          <button 
+            v-for="cat in categories" 
+            :key="cat"
+            @click="selectedCategory = cat"
+            :class="[
+              'px-4 py-2 rounded-full text-xs font-bold transition-all duration-300 border',
+              selectedCategory === cat 
+                ? 'bg-gray-800 text-white border-gray-800 shadow-md transform scale-105' 
+                : 'bg-white text-gray-500 border-gray-200 hover:border-rose-200 hover:text-rose-500'
+            ]"
+          >
+            {{ cat }}
+          </button>
+        </div>
+      </div>
+
 
       <div class="bg-white p-1.5 rounded-2xl shadow-sm border border-rose-100 mb-6 flex">
         <button 
@@ -142,6 +160,10 @@
                     </h4>
                     
                     <div class="flex gap-2">
+                      <button v-if="!item.is_template" @click="openEditModal(item)" class="text-gray-300 hover:text-blue-500 transition w-6 h-6 flex items-center justify-center">
+                          <i class="fas fa-pen"></i>
+                      </button>
+
                       <button v-if="!item.is_template" @click="deleteItem(item.id)" class="text-gray-300 hover:text-red-500 transition w-6 h-6 flex items-center justify-center">
                           <i class="far fa-trash-alt"></i>
                       </button>
@@ -210,10 +232,12 @@ const jwtCookie = useCookie('jwt')
 const myItems = ref<any[]>([])
 const loading = ref(true)
 const activeTab = ref<'alacaklar' | 'alinanlar'>('alacaklar')
-
+const selectedCategory = ref('Tümü')
+const categories = ['Tümü','Hazırlık', 'Mutfak', 'Salon', 'Yatak Odası', 'Elektronik', 'Banyo', 'Diğer']
 // Bildirim State'leri
 const showNotifications = ref(false)
 const notifications = ref<any[]>([])
+
 
 // Yardımcı Fonksiyonlar
 const getInitials = (name: string) => name ? name.substring(0, 2).toUpperCase() : '?'
@@ -348,12 +372,27 @@ const toggleNotifications = () => {
 }
 
 // --- HESAPLAMALAR ---
-const alinanlar = computed(() => myItems.value.filter(item => item.is_purchased))
+const alinanlar = computed(() => {
+  return myItems.value.filter(item => {
+    // 1. Satın alınmış mı?
+    if (!item.is_purchased) return false
+    // 2. Kategori filtresi (YENİ)
+    if (selectedCategory.value !== 'Tümü' && item.category !== selectedCategory.value) return false
+    
+    return true
+  })
+})
 const alacaklar = computed(() => {
   const userOwnedTitles = new Set(myItems.value.filter(i => !i.is_template).map(i => i.title.toLowerCase().trim()))
+  
   return myItems.value.filter(item => {
+    // 1. Satın alınmamış olmalı
     if (item.is_purchased) return false
+    // 2. Template kontrolü (Var olanlar gizlensin)
     if (item.is_template && userOwnedTitles.has(item.title.toLowerCase().trim())) return false
+    // 3. Kategori filtresi (YENİ)
+    if (selectedCategory.value !== 'Tümü' && item.category !== selectedCategory.value) return false
+
     return true
   })
 })
@@ -361,12 +400,150 @@ const currentList = computed(() => (activeTab.value === 'alacaklar' ? alacaklar.
 const totalAlacakAmount = computed(() => alacaklar.value.reduce((sum, item) => sum + (Number(item.price) || 0), 0))
 const totalHarcananAmount = computed(() => alinanlar.value.reduce((sum, item) => sum + (Number(item.price) || 0), 0))
 
+const openEditModal = async (item: any) => {
+  const categories = ['Hazırlık','Mutfak', 'Salon', 'Yatak Odası', 'Elektronik', 'Banyo', 'Diğer']
+
+  const { value: values } = await Swal.fire({
+    title: 'Ürünü Düzenle',
+    html: `
+      <div class="text-left space-y-3 p-1">
+        <input id="sw-title" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="Ürün Adı (Zorunlu)">
+        <select id="sw-category" class="w-full px-3 py-2 border rounded-lg text-sm bg-white">
+           ${categories.map(c => `<option value="${c}">${c}</option>`).join('')}
+        </select>
+        
+        <div class="border border-dashed border-gray-300 rounded-lg p-3 bg-gray-50 text-center relative">
+            <input type="file" id="sw-file" accept="image/*" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10">
+            <div class="text-gray-500 text-sm" id="sw-file-label">
+                <i class="fas fa-cloud-upload-alt text-2xl mb-1 text-rose-400"></i><br>
+                Yeni Fotoğraf Seç (Opsiyonel)
+            </div>
+        </div>
+        
+        <div class="text-center text-xs text-gray-400 font-bold">- VEYA -</div>
+        <input id="sw-image" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="Resim Linki (İnternetten)">
+        
+        <div class="grid grid-cols-2 gap-2">
+           <input id="sw-price" type="number" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="Fiyat">
+           <input id="sw-link" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="Satın Alma Linki">
+        </div>
+        <div class="flex items-center gap-2 pt-2">
+           <input id="sw-purchased" type="checkbox" class="w-4 h-4 text-rose-600 rounded"> 
+           <label for="sw-purchased" class="text-sm">Satın Aldım</label>
+        </div>
+      </div>
+    `,
+    didOpen: () => {
+        // --- VERİLERİ DOLDURMA KISMI ---
+        (document.getElementById('sw-title') as HTMLInputElement).value = item.title;
+        (document.getElementById('sw-category') as HTMLSelectElement).value = item.category || 'Diğer';
+        (document.getElementById('sw-price') as HTMLInputElement).value = item.price || '';
+        (document.getElementById('sw-link') as HTMLInputElement).value = item.link || '';
+        (document.getElementById('sw-purchased') as HTMLInputElement).checked = item.is_purchased;
+        
+        // Resim URL varsa doldur
+        if (item.imageUrl) {
+            (document.getElementById('sw-image') as HTMLInputElement).value = item.imageUrl;
+        }
+
+        // --- DOSYA/URL ETKİLEŞİM LOGIC'İ (Ekleme ile aynı) ---
+        const fileInput = document.getElementById('sw-file') as HTMLInputElement
+        const urlInput = document.getElementById('sw-image') as HTMLInputElement
+        const label = document.getElementById('sw-file-label')
+
+        if(fileInput && urlInput && label) {
+            fileInput.addEventListener('change', (e: any) => {
+                if (e.target.files.length > 0) {
+                    label.innerHTML = `<i class="fas fa-check text-green-500"></i> ${e.target.files[0].name}`
+                    label.classList.add('text-green-600', 'font-bold')
+                    urlInput.value = '' 
+                }
+            })
+            urlInput.addEventListener('input', () => {
+                if(urlInput.value.length > 0) {
+                    fileInput.value = '' 
+                    label.innerHTML = `<i class="fas fa-cloud-upload-alt text-2xl mb-1 text-rose-400"></i><br>Yeni Fotoğraf Seç (Opsiyonel)`
+                    label.classList.remove('text-green-600', 'font-bold')
+                }
+            })
+        }
+    },
+    showCancelButton: true,
+    confirmButtonText: 'Güncelle',
+    confirmButtonColor: '#3b82f6', // Mavi renk güncelleme için
+    preConfirm: () => {
+      const title = (document.getElementById('sw-title') as HTMLInputElement)?.value?.trim()
+      const category = (document.getElementById('sw-category') as HTMLSelectElement)?.value
+      const imageUrl = (document.getElementById('sw-image') as HTMLInputElement)?.value?.trim()
+      const fileInput = (document.getElementById('sw-file') as HTMLInputElement)
+      const priceRaw = (document.getElementById('sw-price') as HTMLInputElement)?.value
+      const link = (document.getElementById('sw-link') as HTMLInputElement)?.value?.trim()
+      const is_purchased = (document.getElementById('sw-purchased') as HTMLInputElement)?.checked
+
+      if (!title) { Swal.showValidationMessage('Ürün adı giriniz'); return }
+      const file = fileInput.files?.length ? fileInput.files[0] : null
+      return { title, category, imageUrl, file, priceRaw, link, is_purchased }
+    }
+  })
+
+  if (!values) return
+
+  Swal.fire({ title: 'Güncelleniyor...', didOpen: () => Swal.showLoading() })
+
+  try {
+    let uploadedImageId = item.image?.id || null // Mevcut resim ID'sini koru
+
+    // 1. EĞER YENİ DOSYA VARSA YÜKLE
+    if (values.file) {
+        const formData = new FormData()
+        formData.append('files', values.file)
+        const uploadRes: any = await $fetch(`${config.public.apiBase}/api/upload`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${jwtCookie.value}` },
+            body: formData
+        })
+        if (uploadRes && uploadRes[0]) {
+            uploadedImageId = uploadRes[0].id
+        }
+    } 
+    // EĞER URL GİRİLDİYSE VE DOSYA YOKSA, DOSYA ID'SİNİ NULL YAP (URL ÖNCELİKLİ)
+    else if (values.imageUrl) {
+        uploadedImageId = null;
+    }
+
+    // 2. GÜNCELLEME İSTEĞİ (PUT)
+    const price = values.priceRaw ? Number(values.priceRaw) : 0
+    await request(`/api/products/${item.id}`, {
+      method: 'PUT',
+      body: {
+        data: {
+          title: values.title,
+          category: values.category,
+          imageUrl: values.imageUrl, 
+          image: uploadedImageId,     
+          price: price,
+          link: values.link || null,  
+          is_purchased: !!values.is_purchased,
+        },
+      },
+    })
+
+    await fetchList()
+    Swal.mixin({ toast: true, position: 'bottom-end', showConfirmButton: false, timer: 2000 }).fire({ icon: 'success', title: 'Güncellendi' })
+
+  } catch (e: any) {
+    console.error(e)
+    Swal.fire('Hata', `Güncelleme hatası: ${e.message}`, 'error')
+  }
+}
+
+
 // --- OPEN MODAL (JWT Düzeltmesi ile) ---
 const openAddModal = async () => {
   const ok = await ensureLoggedIn()
   if (!ok) return
 
-  const categories = ['Mutfak', 'Salon', 'Yatak Odası', 'Elektronik', 'Banyo', 'Diğer']
+  const categories = ['Hazırlık','Mutfak', 'Salon', 'Yatak Odası', 'Elektronik', 'Banyo', 'Diğer']
 
   const { value: values } = await Swal.fire({
     title: 'Yeni Ürün',
