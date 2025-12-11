@@ -586,13 +586,22 @@ const openEditModal = async (item: any) => {
         </div>
       </div>
     `,
-    didOpen: () => {
-        const fileInput = document.getElementById('sw-file') as HTMLInputElement
-        const label = document.getElementById('sw-file-label')
-        if(fileInput && label) {
-            fileInput.addEventListener('change', (e: any) => { if (e.target.files.length > 0) label.innerHTML = `<i class="fas fa-check text-green-500"></i> ${e.target.files[0].name}` })
-        }
-    },
+   didOpen: () => {
+    if (!process.client) return
+
+    const fileInput = document.getElementById('sw-file') as HTMLInputElement
+    const label = document.getElementById('sw-file-label')
+
+    if (fileInput && label) {
+        fileInput.addEventListener('change', (e: any) => {
+            const files = e.target?.files
+            if (files && files.length > 0) {
+                label.innerHTML = `<i class="fas fa-check text-green-500"></i> ${files[0].name}`
+            }
+        })
+    }
+},
+
     showCancelButton: true,
     confirmButtonText: 'Güncelle',
     confirmButtonColor: '#3b82f6',
