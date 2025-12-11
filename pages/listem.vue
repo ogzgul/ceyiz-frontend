@@ -237,11 +237,9 @@
     </div>
   </div>
 </template>
-
 <script setup lang="ts">
 import Swal from 'sweetalert2'
-// ShallowRef: Performans için derin izlemeyi kapatır. 1000 üründe Vue'yu hızlandırır.
-import { shallowRef, triggerRef, computed, ref, onMounted, watch } from 'vue'
+import { shallowRef, triggerRef, computed, ref, onMounted, watch, onUnmounted } from 'vue'
 
 const { request } = apiUse()
 const { user, me } = useAuth()
@@ -249,46 +247,44 @@ const config = useRuntimeConfig()
 const jwtCookie = useCookie('jwt') 
 
 // --- STATE ---
-// HIZLANDIRMA 1: 'ref' yerine 'shallowRef'. Vue objenin içini izlemez, sadece listeyi izler.
-const myItems = shallowRef<any[]>([]) 
+// HIZLANDIRMA 1: 'shallowRef' kullanarak Vue'nun derinlemesine izlemesini kapatıyoruz.
+const allItems = shallowRef<any[]>([]) 
+
 const loading = ref(true)
 const loadingMore = ref(false)
 const activeTab = ref<'alacaklar' | 'alinanlar'>('alacaklar')
 const selectedCategory = ref('Tümü')
 const categories = ['Tümü','Hazırlık', 'Mutfak', 'Salon', 'Yatak Odası', 'Elektronik', 'Banyo', 'Diğer']
 
-// Pagination State
-const page = ref(1)
-const pageSize = ref(25) // Sayfa başına ürün
-const totalItems = ref(0)
-const hasMore = ref(true)
+// Ekranda gösterilecek limit (Virtual Scroll benzeri mantık için)
+const displayLimit = ref(20)
 
 // Bildirimler
 const showNotifications = ref(false)
 const notifications = ref<any[]>([])
 
-// Cache Key
-const CACHE_KEY = 'my_ceyiz_list_cache'
+// Cache Anahtarı
+const CACHE_KEY = 'my_ceyiz_smart_cache'
 
 // --- INIT ---
 onMounted(() => {
-    // 1. LocalStorage'dan yükle (Hız)
+    // 1. Cache'den Yükle (Anında görüntü)
     const cached = localStorage.getItem(CACHE_KEY)
     if (cached) {
         try {
-            myItems.value = JSON.parse(cached)
+            allItems.value = JSON.parse(cached)
             loading.value = false
-            console.log(`⚡ Cache yüklendi: ${myItems.value.length} ürün`)
+            console.log(`⚡ Cache: ${allItems.value.length} ürün yüklendi.`)
         } catch (e) { console.error('Cache hatası', e) }
     }
 
-    // 2. API'den Tazele
+    // 2. API'den Tazele (Zincirleme Çekim)
     fetchList(true)
     
-    // 3. Scroll Observer
+    // 3. Scroll Observer (Sonsuz Kaydırma - Limiti Artırma)
     observer = new IntersectionObserver((entries) => {
-        if (entries[0].isIntersecting && hasMore.value && !loading.value && !loadingMore.value) {
-            fetchList(false) // Load More
+        if (entries[0].isIntersecting && !loading.value) {
+            loadMoreDisplay()
         }
     }, { threshold: 0.5 })
     
@@ -297,127 +293,121 @@ onMounted(() => {
     }, 500)
 })
 
-// --- FILTERING (CLIENT-SIDE) ---
-// HIZLANDIRMA 2: Kategori geçişinde API'ye gitme, eldekini filtrele.
-const currentList = computed(() => {
-    let list = myItems.value
+const loadMoreDisplay = () => {
+    if (displayLimit.value < filteredPool.value.length) {
+        displayLimit.value += 20
+    }
+}
 
-    // Tab Filtresi
+// --- FILTERING (GÖRÜNTÜLEME MANTIĞI) ---
+// 1. Filtrelenmiş Havuz (Tüm veri üzerinden)
+const filteredPool = computed(() => {
+    let list = allItems.value
     const isPurchased = activeTab.value === 'alinanlar'
     list = list.filter(item => item.is_purchased === isPurchased)
 
-    // Kategori Filtresi
     if (selectedCategory.value !== 'Tümü') {
         list = list.filter(item => item.category === selectedCategory.value)
     }
-
     return list
 })
 
-// HIZLANDIRMA 3: Hesaplamaları optimize et
-const alacaklar = computed(() => myItems.value.filter(i => !i.is_purchased)) 
-const alinanlar = computed(() => myItems.value.filter(i => i.is_purchased))
-const totalAlacakAmount = computed(() => alacaklar.value.reduce((sum, item) => sum + (Number(item.price)||0), 0))
-const totalHarcananAmount = computed(() => alinanlar.value.reduce((sum, item) => sum + (Number(item.price)||0), 0))
-
-// Watcher: Kategori değişince API'ye gitme, computed zaten süzer. 
-// Sadece veri yoksa (ilk yükleme hariç) belki çekilebilir ama sayfalama ile zaten çekiyoruz.
-watch([activeTab, selectedCategory], () => {
-    // Scroll yukarı at
-    // window.scrollTo(0,0) 
+// 2. Ekrana Basılan (Limitli)
+const currentList = computed(() => {
+    return filteredPool.value.slice(0, displayLimit.value)
 })
 
-// --- DATA FETCHING (API) ---
+// Kategori değişince scroll başa
+watch([activeTab, selectedCategory], () => {
+    displayLimit.value = 20
+})
+
+// --- DATA FETCHING (ZİNCİRLEME / RECURSIVE FETCH) ---
 const fetchList = async (reset = true) => {
-    if (!reset && (!hasMore.value || loadingMore.value)) return
+    if (!reset && loading.value) return
 
     if (reset) {
-        if (myItems.value.length === 0) loading.value = true // Sadece cache boşsa loading göster
-        page.value = 1
-    } else {
-        loadingMore.value = true
-        page.value++
+        if (allItems.value.length === 0) loading.value = true
     }
 
     try {
         const ok = await ensureLoggedIn()
         if (!ok) return
 
-        // 1. API İsteği (Kategori filtresi göndermiyoruz, hepsini alıp Client'ta süzüyoruz)
-        // Böylece kategori değiştirince tekrar yüklemeye gerek kalmıyor.
+        // 1. İLK PARTİ İSTEĞİ (İlk 500 ürün)
+        // 500 adet çekiyoruz, tarayıcıyı yormadan ilk görüntüyü vermek için.
+        const pageSizeLimit = 500 
+        
         const queryParams: any = {
             'sort': 'createdAt:desc',
-            'pagination[page]': page.value,
-            'pagination[pageSize]': pageSize.value,
+            'pagination[page]': 1,
+            'pagination[pageSize]': pageSizeLimit,
             'filters[user][id][$eq]': user.value.id
         }
 
         const res: any = await request('/api/products', { method: 'GET', query: queryParams })
-        let newItems = res?.data ?? []
         
-        // Meta
-        if (res?.meta?.pagination) {
-            totalItems.value = res.meta.pagination.total
-            hasMore.value = newItems.length >= pageSize.value
-        } else { hasMore.value = false }
+        let fetchedData = res?.data ?? []
+        const meta = res?.meta?.pagination
 
-        // 2. Tavsiye Eşleştirme
-        const productIds = newItems.map((p: any) => p.id)
-        if (productIds.length > 0) {
-             const recQuery: any = {
-                'pagination[pageSize]': productIds.length + 5,
-                'filters[user][id][$eq]': user.value.id,
-                'populate[product][fields][0]': 'id'
-            }
-            productIds.forEach((id: number, index: number) => {
-                recQuery[`filters[product][id][$in][${index}]`] = id
-            });
-
+        // --- TAVSİYE EŞLEŞTİRME YARDIMCISI ---
+        const enrichWithRecommendations = async (items: any[]) => {
+            const pIds = items.map((p: any) => p.id)
+            if (pIds.length === 0) return items
+            
             try {
+                // ID'leri query string formatına çevir
+                const recQuery: any = {
+                    'pagination[pageSize]': pIds.length + 50,
+                    'filters[user][id][$eq]': user.value.id,
+                    'populate[product][fields][0]': 'id'
+                }
+                pIds.forEach((id: number, idx: number) => {
+                    recQuery[`filters[product][id][$in][${idx}]`] = id
+                })
+                
                 const recRes: any = await request('/api/recommendations', { method: 'GET', query: recQuery })
                 const myRecs = recRes.data || []
-                newItems = newItems.map((prod: any) => {
+                
+                return items.map((prod: any) => {
                     const rec = myRecs.find((r: any) => r.product && String(r.product.id) === String(prod.id))
                     return { ...prod, my_recommendation_id: rec ? rec.id : null }
                 })
-            } catch(e) { console.error(e) }
+            } catch(e) { return items }
         }
 
-        // 3. Merge & Cache Update
-        if (reset) {
-            // Reset'te: Gelen yeni verileri, cache'deki ESKİ (diğer sayfalardaki) verilerle birleştir.
-            // ID çakışmasını önle
-            const newIds = new Set(newItems.map(i => i.id))
-            const cachedOthers = myItems.value.filter(i => !newIds.has(i.id))
+        // İlk partiyi eşleştir ve ekrana bas
+        fetchedData = await enrichWithRecommendations(fetchedData)
+        allItems.value = fetchedData 
+        triggerRef(allItems) // Vue'ya "Veri değişti" de
+        
+        // 2. KALAN SAYFALARI ARKA PLANDA ÇEK (Zincirleme)
+        if (meta && meta.pageCount > 1) {
+            console.log(`📦 Toplam ${meta.total} ürün var. Kalan ${meta.pageCount - 1} sayfa arkada yükleniyor...`)
             
-            // Sıralama bozulmaması için: Eğer sayfa 1 ise başa koy, değilse...
-            // En basiti: ID'ye göre merge etmek veya direkt replace etmek.
-            // Sayfalama düzgün çalışması için: Sayfa 1 ise, listenin başını güncelle.
-            
-            if (page.value === 1) {
-                // Sayfa 1: Yeniler + Eskilerin (bu sayfada olmayanları)
-                myItems.value = [...newItems, ...cachedOthers] 
-            } else {
-                // Reset ama sayfa > 1 (Nadir durum): Genelde sadece init'te reset=true olur.
-                myItems.value = [...cachedOthers, ...newItems]
+            for (let p = 2; p <= meta.pageCount; p++) {
+                const nextQuery = { ...queryParams, 'pagination[page]': p }
+                const nextRes: any = await request('/api/products', { method: 'GET', query: nextQuery })
+                let nextItems = nextRes?.data ?? []
+                
+                // Gelen yeni paketi de eşleştir
+                nextItems = await enrichWithRecommendations(nextItems)
+                
+                // Mevcut listenin altına ekle
+                allItems.value = [...allItems.value, ...nextItems]
+                triggerRef(allItems) 
             }
-        } else {
-            // Load More: Sona ekle
-            const existingIds = new Set(myItems.value.map(i => i.id))
-            const uniqueNew = newItems.filter(i => !existingIds.has(i.id))
-            myItems.value = [...myItems.value, ...uniqueNew]
         }
 
-        triggerRef(myItems) // ShallowRef güncelleme
-        localStorage.setItem(CACHE_KEY, JSON.stringify(myItems.value))
+        // 3. HEPSİ BİTİNCE CACHE GÜNCELLE
+        localStorage.setItem(CACHE_KEY, JSON.stringify(allItems.value))
         
         if (reset) fetchNotifications()
 
     } catch (e) {
-        console.error('Liste hatası', e)
+        console.error('Liste yükleme hatası', e)
     } finally {
         loading.value = false
-        loadingMore.value = false
     }
 }
 
@@ -461,17 +451,16 @@ const fetchNotifications = async () => {
 const toggleNotifications = () => showNotifications.value = !showNotifications.value
 
 
-// --- CRUD (Optimistic UI Updates) ---
+// --- CRUD İŞLEMLERİ (CACHE GÜNCELLEMELİ) ---
 
 const deleteItem = async (id: number) => {
   if(confirm('Silinsin mi?')) { 
-      // UI Sil
-      myItems.value = myItems.value.filter(i => i.id !== id)
-      triggerRef(myItems)
-      localStorage.setItem(CACHE_KEY, JSON.stringify(myItems.value))
+      allItems.value = allItems.value.filter(i => i.id !== id)
+      triggerRef(allItems)
+      localStorage.setItem(CACHE_KEY, JSON.stringify(allItems.value))
 
       try { await request(`/api/products/${id}`, { method: 'DELETE' }); } 
-      catch(e) { fetchList(true) } // Hata olursa geri al
+      catch(e) { fetchList(true) }
   }
 }
 
@@ -491,11 +480,11 @@ const toggleStatus = async (item: any) => {
     const newStatus = !item.is_purchased
     
     // UI Güncelle
-    const target = myItems.value.find(i => i.id === item.id)
+    const target = allItems.value.find(i => i.id === item.id)
     if (target) {
         target.is_purchased = newStatus
-        triggerRef(myItems)
-        localStorage.setItem(CACHE_KEY, JSON.stringify(myItems.value))
+        triggerRef(allItems)
+        localStorage.setItem(CACHE_KEY, JSON.stringify(allItems.value))
     }
 
     try { 
@@ -505,7 +494,7 @@ const toggleStatus = async (item: any) => {
         })
         if(newStatus) Swal.mixin({ toast: true, position: 'center', showConfirmButton: false, timer: 1500 }).fire({ icon: 'success', title: 'Harika!' }) 
     } catch (e) { 
-        if(target) target.is_purchased = !newStatus
+        if(target) target.is_purchased = !newStatus 
         fetchList(true)
     }
 }
@@ -520,19 +509,22 @@ const recommendItem = async (item: any) => {
       showCancelButton: true, 
       cancelButtonText: 'Vazgeç' 
   })
+  
   if (text) {
     try { 
         const res: any = await request('/api/recommendations', { 
             method: 'POST', 
             body: { data: { comment: text, product: item.id } } 
         })
-        const target = myItems.value.find(i => i.id === item.id)
+        
+        const target = allItems.value.find(i => i.id === item.id)
         if(target) {
             target.my_recommendation_id = res.data?.id || res.id
-            triggerRef(myItems)
-            localStorage.setItem(CACHE_KEY, JSON.stringify(myItems.value))
+            triggerRef(allItems)
+            localStorage.setItem(CACHE_KEY, JSON.stringify(allItems.value))
         }
-        Swal.fire({ toast: true, position: 'center', icon: 'success', title: 'Paylaşıldı!', showConfirmButton: false, timer: 2000 }) 
+
+        Swal.fire({ toast: true, position: 'center', icon: 'success', title: 'Tavsiyen paylaşıldı!', showConfirmButton: false, timer: 2000 }) 
     } catch (e) { Swal.fire('Hata', 'Paylaşım yapılamadı.', 'error') } 
   }
 }
@@ -540,14 +532,15 @@ const recommendItem = async (item: any) => {
 const removeRecommendation = async (item: any) => {
     if(!item.my_recommendation_id) return
     const confirm = await Swal.fire({ title: 'Tavsiyeni Kaldır', icon: 'warning', showCancelButton: true, confirmButtonColor: '#d33', confirmButtonText: 'Evet, Sil' })
+
     if (confirm.isConfirmed) {
         try {
             await request(`/api/recommendations/${item.my_recommendation_id}`, { method: 'DELETE' })
-            const target = myItems.value.find(i => i.id === item.id)
+            const target = allItems.value.find(i => i.id === item.id)
             if(target) {
                 target.my_recommendation_id = null
-                triggerRef(myItems)
-                localStorage.setItem(CACHE_KEY, JSON.stringify(myItems.value))
+                triggerRef(allItems)
+                localStorage.setItem(CACHE_KEY, JSON.stringify(allItems.value))
             }
             Swal.mixin({ toast: true, position: 'center', showConfirmButton: false, timer: 1500 }).fire({ icon: 'success', title: 'Silindi' })
         } catch (e) { Swal.fire('Hata', 'Silinemedi.', 'error') }
@@ -622,17 +615,16 @@ const openEditModal = async (item: any) => {
       body: { data: { title: values.title, category: values.category, imageUrl: values.imageUrl, image: uploadedImageId, price: price, link: values.link || null, is_purchased: !!values.is_purchased } },
     })
 
-    // UI'daki item'ı manuel güncelle (Refresh'e gerek yok)
-    const target = myItems.value.find(i => i.id === item.id)
+    const target = allItems.value.find(i => i.id === item.id)
     if(target) {
         target.title = values.title
         target.category = values.category
         target.price = price
         target.imageUrl = values.imageUrl
-        // Image güncellemesi biraz daha kompleks, basitlik için reload yapılabilir ama şart değil
+        target.is_purchased = !!values.is_purchased
     }
-    triggerRef(myItems)
-    localStorage.setItem(CACHE_KEY, JSON.stringify(myItems.value))
+    triggerRef(allItems)
+    localStorage.setItem(CACHE_KEY, JSON.stringify(allItems.value))
 
     Swal.mixin({ toast: true, position: 'bottom-end', showConfirmButton: false, timer: 2000 }).fire({ icon: 'success', title: 'Güncellendi' })
   } catch (e: any) { Swal.fire('Hata', `Güncelleme hatası: ${e.message}`, 'error') }
@@ -707,9 +699,7 @@ const openAddModal = async () => {
       body: { data: { title: values.title, category: values.category, imageUrl: values.imageUrl, image: uploadedImageId, price: price, link: values.link || null, is_purchased: !!values.is_purchased, is_template: false } },
     })
     
-    // Listeyi ve cache'i tazele (Refresh'ten kaçınıp manual push yapabiliriz ama ID lazım)
-    // ID için API cevabını beklemek veya direkt fetchList çağırmak mantıklı.
-    // En temiz yol burada fetchList(true) çağırmak, çünkü kullanıcı yeni eklediği ürünü hemen görmek ister.
+    // Ekleme sonrası listeyi ve cache'i tazele
     await fetchList(true) 
     
     Swal.mixin({ toast: true, position: 'bottom-end', showConfirmButton: false, timer: 2000 }).fire({ icon: 'success', title: 'Eklendi' })
@@ -726,5 +716,16 @@ let observer: IntersectionObserver | null = null
 const getInitials = (name: string) => name ? name.substring(0, 2).toUpperCase() : '?'
 const formatDate = (dateString: string) => new Date(dateString).toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })
 const formatPrice = (price: number) => new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY' }).format(price)
+
+// Computed
+const totalAlacakAmount = computed(() => allItems.value.filter(i => !i.is_purchased).reduce((sum, item) => sum + (Number(item.price)||0), 0))
+const totalHarcananAmount = computed(() => allItems.value.filter(i => i.is_purchased).reduce((sum, item) => sum + (Number(item.price)||0), 0))
+// hasMore template'de kullanılıyor, onu da expose ediyoruz
+const hasMore = computed(() => displayLimit.value < filteredPool.value.length)
+
+// Template için
+const alacaklar = computed(() => allItems.value.filter(i => !i.is_purchased)) 
+const alinanlar = computed(() => allItems.value.filter(i => i.is_purchased))
+const totalItems = ref(0) // Eski kodla uyumluluk (zaten meta'dan güncellenmiyor artık)
 
 </script>
