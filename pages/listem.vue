@@ -1,30 +1,38 @@
 <template>
   <div class="bg-[#fff5f5] min-h-screen pb-20 font-sans">
     
-    <header class="bg-white/80 backdrop-blur-md sticky top-0 z-40 border-b border-rose-100 shadow-sm">
-      <div class="max-w-3xl mx-auto px-4 py-4 flex items-center justify-between">
+   <header class="bg-white/80 backdrop-blur-md sticky top-0 z-40 border-b border-rose-100 shadow-sm">
+      <div class="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between">
         
-        <NuxtLink to="/" class="w-10 h-10 flex items-center justify-center rounded-full bg-rose-50 text-rose-600 hover:bg-rose-100 transition shadow-sm border border-rose-100">
-          <i class="fas fa-arrow-left"></i>
+        <NuxtLink to="/" class="w-10 h-10 flex items-center justify-center rounded-full bg-gray-100 text-gray-600 hover:bg-rose-50 hover:text-rose-500 transition shadow-sm border border-gray-100 group" title="Ana Sayfa">
+          <i class="fas fa-compass text-lg group-hover:rotate-45 transition-transform duration-300"></i>
         </NuxtLink>
         
-        <h1 class="text-xl font-bold text-gray-800 tracking-tight flex items-center gap-2">
+        <h1 class="text-lg font-bold text-gray-800 tracking-tight flex items-center gap-1 hidden sm:flex">
           <span class="bg-gradient-to-tr from-rose-400 to-pink-500 text-transparent bg-clip-text">Çeyiz Listem</span>
         </h1>
-       
+        
+        <div class="flex items-center gap-2">
+            
+            <NuxtLink to="/oneriler" class="hidden sm:flex items-center gap-2 bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-full text-xs font-bold border border-indigo-100 hover:bg-indigo-100 transition">
+                <i class="fas fa-magic"></i>
+                <span>Öneriler</span>
+            </NuxtLink>
+            <NuxtLink to="/oneriler" class="sm:hidden w-10 h-10 flex items-center justify-center rounded-full bg-indigo-50 text-indigo-600 border border-indigo-100 hover:bg-indigo-100 transition">
+                <i class="fas fa-magic"></i>
+            </NuxtLink>
 
-       <div class="flex items-center gap-3">
-    <button @click="toggleNotifications" class="w-10 h-10 rounded-full bg-white text-gray-600 border border-gray-100 hover:text-rose-500 hover:border-rose-100 transition shadow-sm flex items-center justify-center relative">
-        <i class="far fa-bell text-lg"></i>
-        <span v-if="notifications.filter(n => !n.read).length > 0" class="absolute top-0 right-0 w-3 h-3 bg-red-500 rounded-full border-2 border-white"></span>
-    </button>
+            <button @click="toggleNotifications" class="w-10 h-10 rounded-full bg-white text-gray-600 border border-gray-100 hover:text-rose-500 hover:border-rose-100 transition shadow-sm flex items-center justify-center relative">
+                <i class="far fa-bell text-lg"></i>
+                <span v-if="notifications.filter(n => !n.read).length > 0" class="absolute top-0 right-0 w-3 h-3 bg-red-500 rounded-full border-2 border-white"></span>
+            </button>
 
-    <NuxtLink to="/profile" class="w-10 h-10 rounded-full bg-gradient-to-tr from-rose-400 to-pink-500 p-0.5 shadow-md hover:scale-105 transition transform cursor-pointer">
-        <div class="w-full h-full bg-white rounded-full flex items-center justify-center text-rose-500 font-bold text-sm">
-            {{ user ? getInitials(user.username) : '?' }}
+            <NuxtLink to="/profile" class="w-10 h-10 rounded-full bg-gradient-to-tr from-rose-400 to-pink-500 p-0.5 shadow-md hover:scale-105 transition transform cursor-pointer">
+                <div class="w-full h-full bg-white rounded-full flex items-center justify-center text-rose-500 font-bold text-sm">
+                    {{ user ? getInitials(user.username) : '?' }}
+                </div>
+            </NuxtLink>
         </div>
-    </NuxtLink>
-</div>
 
       </div>
     </header>

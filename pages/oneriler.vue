@@ -1,0 +1,473 @@
+<template>
+  <div class="bg-gray-50 min-h-screen pb-20 font-sans">
+    
+    <nav class="bg-white/90 backdrop-blur-md sticky top-0 z-40 border-b border-rose-100">
+      <div class="max-w-3xl mx-auto px-4 py-3 flex justify-between items-center">
+        <div class="flex items-center gap-3">
+            <NuxtLink to="/listem" class="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 text-gray-600 hover:bg-rose-100 hover:text-rose-500 transition">
+                <i class="fas fa-arrow-left"></i>
+            </NuxtLink>
+            <h1 class="text-xl font-bold text-gray-800">Çeyiz Önerileri</h1>
+        </div>
+        <button @click="forceRefresh" class="text-xs text-rose-500 font-bold hover:bg-rose-50 px-3 py-1 rounded-lg transition" title="Listeyi Güncelle">
+            <i class="fas fa-sync-alt mr-1"></i> Güncelle
+        </button>
+      </div>
+    </nav>
+
+    <div class="max-w-3xl mx-auto px-4 py-6 space-y-8">
+
+      <div v-if="loading" class="flex flex-col items-center justify-center py-20 text-gray-400 animate-fade-in">
+         <div class="relative w-16 h-16 mb-4">
+             <div class="absolute inset-0 border-4 border-gray-200 rounded-full"></div>
+             <div class="absolute inset-0 border-4 border-rose-500 rounded-full border-t-transparent animate-spin"></div>
+             <i class="fas fa-clipboard-list absolute inset-0 flex items-center justify-center text-rose-500 text-xl"></i>
+         </div>
+         <span class="text-sm font-medium text-gray-500">Listeniz hazırlanıyor...</span>
+         <span class="text-xs text-gray-400 mt-1">Bu işlem sadece ilk açılışta yapılır.</span>
+      </div>
+
+      <div v-else v-for="(items, category) in mockSuggestions" :key="category" class="animate-fade-in-up">
+        
+        <h2 class="text-lg font-extrabold text-gray-800 mb-3 flex items-center gap-2 sticky top-16 bg-gray-50/95 backdrop-blur py-2 z-10 pl-1">
+            <span class="w-1 h-6 bg-rose-500 rounded-full"></span>
+            {{ category }}
+            <span class="text-xs font-normal text-gray-400 bg-white px-2 py-0.5 rounded-full border">
+                {{ items.length }} Öneri
+            </span>
+        </h2>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div v-for="item in items" :key="item.title" 
+                 class="bg-white p-4 rounded-2xl shadow-sm border transition-all duration-300 relative overflow-hidden group/card"
+                 :class="getStatus(item.title).exists ? 'border-green-200 bg-green-50/30' : 'border-gray-100 hover:border-rose-200'">
+                
+                <div class="flex justify-between items-start">
+                    <div>
+                        <h3 class="font-bold text-gray-800">{{ item.title }}</h3>
+                        <p class="text-xs text-gray-400 mt-0.5">Ortalama: {{ item.avgPrice }}</p>
+                    </div>
+                    
+                    <div v-if="getStatus(item.title).exists" class="w-8 h-8 rounded-full bg-green-100 text-green-600 flex items-center justify-center shadow-sm animate-bounce-short">
+                        <i class="fas fa-check"></i>
+                    </div>
+                    <div v-else class="w-8 h-8 rounded-full bg-gray-100 text-gray-400 flex items-center justify-center group-hover/card:bg-rose-50 group-hover/card:text-rose-500 transition">
+                        <i class="fas fa-lightbulb"></i>
+                    </div>
+                </div>
+
+                <div class="mt-4 pt-3 border-t border-gray-100/50 flex flex-col gap-2">
+                    
+                    <div v-if="getStatus(item.title).exists" class="text-xs text-orange-600 bg-orange-50 font-medium flex items-start gap-2 p-2 rounded-lg border border-orange-100">
+                        <i class="fas fa-exclamation-circle mt-0.5"></i>
+                        <div>
+                            Listende benzer ürün var:<br>
+                            <span class="font-bold text-orange-800">{{ getStatus(item.title).matchName }}</span>
+                        </div>
+                    </div>
+
+                    <button @click="openAddModal(item)" 
+                            class="w-full py-2.5 font-bold rounded-xl text-xs transition flex items-center justify-center gap-2 group"
+                            :class="getStatus(item.title).exists 
+                                ? 'bg-orange-100 text-orange-600 hover:bg-orange-500 hover:text-white' 
+                                : 'bg-rose-50 text-rose-600 hover:bg-rose-500 hover:text-white'">
+                        
+                        <span>{{ getStatus(item.title).exists ? 'Yine de Ekle' : 'Listeme Ekle' }}</span>
+                        
+                        <i class="fas fa-plus group-hover:rotate-90 transition-transform"></i>
+                    </button>
+
+                </div>
+            </div>
+        </div>
+
+      </div>
+
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import Swal from 'sweetalert2'
+
+const { request } = apiUse()
+const { user, me } = useAuth()
+const config = useRuntimeConfig()
+const jwtCookie = useCookie('jwt')
+
+const loading = ref(true)
+const myProducts = ref<any[]>([])
+const CACHE_KEY = 'my_ceyiz_products_cache' // LocalStorage Anahtarı
+
+// --- MOCK DATA: ÖNERİ LİSTESİ ---
+const mockSuggestions = {
+    'Hazırlık': [
+        { title: 'Bıçak Seti', category: 'Hazırlık', avgPrice: '2.500 ₺' },
+        { title: 'Kesme Tahtası', category: 'Hazırlık', avgPrice: '300 ₺' },
+        { title: 'Rende', category: 'Hazırlık', avgPrice: '150 ₺' },
+        { title: 'Soyacak', category: 'Hazırlık', avgPrice: '50 ₺' },
+        { title: 'Süzgeç', category: 'Hazırlık', avgPrice: '200 ₺' },
+        { title: 'Havan', category: 'Hazırlık', avgPrice: '300 ₺' },
+        { title: 'Pastacılık Aletleri', category: 'Hazırlık', avgPrice: '750 ₺' },
+        { title: 'Sebze Kurutucu', category: 'Hazırlık', avgPrice: '250 ₺' },
+        { title: 'Un Eleği', category: 'Hazırlık', avgPrice: '100 ₺' },
+        { title: 'Çırpıcı', category: 'Hazırlık', avgPrice: '100 ₺' },
+        { title: 'Limon Sıkacağı', category: 'Hazırlık', avgPrice: '75 ₺' },
+        { title: 'Oklava / Merdane', category: 'Hazırlık', avgPrice: '150 ₺' },
+    ],
+    'Mutfak': [
+        // Pişirme Grubu
+        { title: 'Çelik Tencere Seti', category: 'Mutfak', avgPrice: '4.500 ₺' },
+        { title: 'Granit Tencere Seti', category: 'Mutfak', avgPrice: '3.500 ₺' },
+        { title: 'Döküm Tencere', category: 'Mutfak', avgPrice: '2.000 ₺' },
+        { title: 'Düdüklü Tencere', category: 'Mutfak', avgPrice: '3.000 ₺' },
+        { title: 'Tava Seti', category: 'Mutfak', avgPrice: '1.500 ₺' },
+        { title: 'Krep Tavası', category: 'Mutfak', avgPrice: '400 ₺' },
+        { title: 'Sahan Seti', category: 'Mutfak', avgPrice: '1.200 ₺' },
+        { title: 'Sos Tenceresi', category: 'Mutfak', avgPrice: '300 ₺' },
+        { title: 'Kek Kalıbı', category: 'Mutfak', avgPrice: '400 ₺' },
+        { title: 'Cezve Takımı', category: 'Mutfak', avgPrice: '500 ₺' },
+        { title: 'Termos', category: 'Mutfak', avgPrice: '600 ₺' },
+        { title: 'Fırın Kabı / Tepsisi', category: 'Mutfak', avgPrice: '400 ₺' },
+        { title: 'Çaydanlık (Büyük ve Küçük)', category: 'Mutfak', avgPrice: '1.500 ₺' },
+        
+        // Sofra & Sunum Grubu
+        { title: 'Günlük Yemek Takımı', category: 'Mutfak', avgPrice: '3.000 ₺' },
+        { title: 'Misafir Yemek Takımı', category: 'Mutfak', avgPrice: '15.000 ₺' },
+        { title: 'Kahvaltı Takımı', category: 'Mutfak', avgPrice: '2.500 ₺' },
+        { title: 'Günlük Çatal Kaşık Bıçak Seti', category: 'Mutfak', avgPrice: '2.000 ₺' },
+        { title: 'Misafir Çatal Kaşık Bıçak Seti', category: 'Mutfak', avgPrice: '5.000 ₺' },
+        { title: 'Su Seti', category: 'Mutfak', avgPrice: '1.200 ₺' },
+        { title: 'Sürahi', category: 'Mutfak', avgPrice: '200 ₺' },
+        { title: 'Günlük Su Bardağı', category: 'Mutfak', avgPrice: '300 ₺' },
+        { title: 'Çay Bardak Takımı', category: 'Mutfak', avgPrice: '500 ₺' },
+        { title: 'Kahve Fincan Takımı', category: 'Mutfak', avgPrice: '800 ₺' },
+        { title: 'Kahve Yanı Su Bardağı', category: 'Mutfak', avgPrice: '250 ₺' },
+        { title: 'Kupa Seti', category: 'Mutfak', avgPrice: '400 ₺' },
+        { title: 'Dondurma Kasesi', category: 'Mutfak', avgPrice: '300 ₺' },
+        { title: 'Tatlı Kasesi', category: 'Mutfak', avgPrice: '400 ₺' },
+        { title: 'Çerez Kasesi', category: 'Mutfak', avgPrice: '250 ₺' },
+        { title: 'Salata Kasesi', category: 'Mutfak', avgPrice: '200 ₺' },
+        { title: 'Sosluk', category: 'Mutfak', avgPrice: '150 ₺' },
+        { title: 'Servis Sunum Tabağı', category: 'Mutfak', avgPrice: '300 ₺' },
+        { title: 'Kapaklı Kek Fanusu', category: 'Mutfak', avgPrice: '400 ₺' },
+        { title: 'Sunumluk Bambu', category: 'Mutfak', avgPrice: '250 ₺' },
+        { title: 'Tuzluk Biberlik', category: 'Mutfak', avgPrice: '100 ₺' },
+        { title: 'Yağdanlık', category: 'Mutfak', avgPrice: '150 ₺' },
+        { title: 'Nihale', category: 'Mutfak', avgPrice: '100 ₺' },
+        { title: 'Kepçe & Maşa Seti', category: 'Mutfak', avgPrice: '600 ₺' },
+
+        // Mutfak Tekstili
+        { title: 'Masa Örtüsü', category: 'Mutfak', avgPrice: '400 ₺' },
+        { title: 'Runner', category: 'Mutfak', avgPrice: '200 ₺' },
+        { title: 'Amerikan Servisi', category: 'Mutfak', avgPrice: '300 ₺' },
+        { title: 'Mutfak Havlusu', category: 'Mutfak', avgPrice: '150 ₺' },
+        { title: 'Mutfak Bezi', category: 'Mutfak', avgPrice: '100 ₺' },
+        { title: 'Kurulama Bezi', category: 'Mutfak', avgPrice: '100 ₺' },
+        { title: 'Peçetelik', category: 'Mutfak', avgPrice: '150 ₺' },
+        { title: 'Fırın Eldiveni', category: 'Mutfak', avgPrice: '100 ₺' },
+        { title: 'Mutfak Önlüğü', category: 'Mutfak', avgPrice: '150 ₺' },
+        { title: 'Sofra Bezi', category: 'Mutfak', avgPrice: '100 ₺' },
+        
+        // Mutfak Gereçleri (Kalanlar)
+        { title: 'Saklama Kapları', category: 'Mutfak', avgPrice: '500 ₺' },
+        { title: 'Kavanozlar', category: 'Mutfak', avgPrice: '400 ₺' },
+        { title: 'Çay, Kahve, Şeker Kavanozu', category: 'Mutfak', avgPrice: '350 ₺' },
+        { title: 'Tepsi', category: 'Mutfak', avgPrice: '250 ₺' },
+        { title: 'Baharatlık Takımı', category: 'Mutfak', avgPrice: '400 ₺' },
+    ],
+    'Elektronik': [
+        { title: 'Kahve Makinesi', category: 'Elektronik', avgPrice: '3.500 ₺' },
+        { title: 'Çay Makinesi', category: 'Elektronik', avgPrice: '1.800 ₺' },
+        { title: 'Blender Seti', category: 'Elektronik', avgPrice: '1.500 ₺' },
+        { title: 'Tost Makinesi', category: 'Elektronik', avgPrice: '2.000 ₺' },
+        { title: 'Saç Kurutma Makinesi', category: 'Elektronik', avgPrice: '1.200 ₺' },
+        { title: 'Süpürge', category: 'Elektronik', avgPrice: '8.000 ₺' },
+        { title: 'Ütü', category: 'Elektronik', avgPrice: '3.000 ₺' },
+        { title: 'Airfryer', category: 'Elektronik', avgPrice: '4.000 ₺' },
+        { title: 'Kettle (Su Isıtıcı)', category: 'Elektronik', avgPrice: '750 ₺' },
+        { title: 'Robot Süpürge', category: 'Elektronik', avgPrice: '12.000 ₺' },
+        { title: 'Ekmek Kızartma Makinesi', category: 'Elektronik', avgPrice: '1.500 ₺' },
+        { title: 'Filtre Kahve Makinesi', category: 'Elektronik', avgPrice: '2.500 ₺' },
+        { title: 'Smoothie Blender', category: 'Elektronik', avgPrice: '1.500 ₺' },
+        { title: 'Hamur Yoğurma Makinesi', category: 'Elektronik', avgPrice: '7.000 ₺' },
+    ],
+    'Yatak Odası': [
+        { title: 'Çift Kişilik Nevresim Takımı', category: 'Yatak Odası', avgPrice: '1.500 ₺' },
+        { title: 'Çift Kişilik Pike Takımı', category: 'Yatak Odası', avgPrice: '1.200 ₺' },
+        { title: 'Çift Kişilik Battaniye', category: 'Yatak Odası', avgPrice: '1.000 ₺' },
+        { title: 'Çift Kişilik Yorgan', category: 'Yatak Odası', avgPrice: '2.000 ₺' },
+        { title: 'Yatak Örtüsü', category: 'Yatak Odası', avgPrice: '3.000 ₺' },
+        { title: 'Tek Kişilik Nevresim Takımı', category: 'Yatak Odası', avgPrice: '1.000 ₺' },
+        { title: 'Tek Kişilik Pike Takımı', category: 'Yatak Odası', avgPrice: '800 ₺' },
+        { title: 'Tek Kişilik Battaniye', category: 'Yatak Odası', avgPrice: '750 ₺' },
+        { title: 'Tek Kişilik Yorgan', category: 'Yatak Odası', avgPrice: '1.500 ₺' },
+        { title: 'TV Battaniyesi', category: 'Yatak Odası', avgPrice: '400 ₺' },
+        { title: 'Yastık', category: 'Yatak Odası', avgPrice: '300 ₺' },
+        { title: 'Alez', category: 'Yatak Odası', avgPrice: '400 ₺' },
+    ],
+    'Banyo': [
+        { title: 'Bornoz Seti', category: 'Banyo', avgPrice: '2.500 ₺' },
+        { title: 'Bornoz Havlusu', category: 'Banyo', avgPrice: '500 ₺' },
+        { title: 'El Yüz Havlusu', category: 'Banyo', avgPrice: '150 ₺' },
+        { title: 'Banyo Havlusu', category: 'Banyo', avgPrice: '300 ₺' },
+        { title: 'Misafir Havlusu', category: 'Banyo', avgPrice: '100 ₺' },
+        { title: 'Ayak Havlusu', category: 'Banyo', avgPrice: '150 ₺' },
+        { title: 'Paspas Seti', category: 'Banyo', avgPrice: '600 ₺' },
+        { title: 'Banyo Seti (Sabunluk vs.)', category: 'Banyo', avgPrice: '500 ₺' },
+        { title: 'Kirli Sepeti', category: 'Banyo', avgPrice: '400 ₺' },
+        { title: 'Çamaşır Sepeti', category: 'Banyo', avgPrice: '300 ₺' },
+    ],
+    'Salon': [
+        // Görsellerde salon mobilyası yoktu, mevcut verini korudum
+        { title: 'Koltuk Takımı', category: 'Salon', avgPrice: '35.000 ₺' },
+        { title: 'TV Ünitesi', category: 'Salon', avgPrice: '5.000 ₺' },
+        { title: 'Orta Sehpa', category: 'Salon', avgPrice: '2.500 ₺' },
+        { title: 'Halı', category: 'Salon', avgPrice: '3.000 ₺' },
+        { title: 'Avize', category: 'Salon', avgPrice: '1.500 ₺' },
+    ],
+    'Diğer': [
+        { title: 'Ütü Masası', category: 'Diğer', avgPrice: '1.500 ₺' },
+        { title: 'Çamaşır Kurutma Askısı', category: 'Diğer', avgPrice: '1.000 ₺' },
+        { title: 'Çöp Kovası', category: 'Diğer', avgPrice: '300 ₺' },
+        { title: 'Temizlik Kovası', category: 'Diğer', avgPrice: '200 ₺' },
+        { title: 'Dikiş Seti', category: 'Diğer', avgPrice: '100 ₺' },
+        { title: 'Vileda / Mop Seti', category: 'Diğer', avgPrice: '500 ₺' },
+        { title: 'Kıyafet Askısı', category: 'Diğer', avgPrice: '150 ₺' },
+        { title: 'Mandal', category: 'Diğer', avgPrice: '50 ₺' },
+    ]
+}
+
+// 1. VERİ ÇEKME & CACHE MANTIĞI
+const initData = async (forceApi = false) => {
+    loading.value = true
+
+    // A) Kullanıcı Kontrolü
+    if (!user.value) {
+        try { await me() } catch (e) { /* Login gerekir */ }
+    }
+    if (!user.value) { loading.value = false; return; }
+
+    // B) LocalStorage Kontrolü (forceApi false ise ve cache varsa oradan oku)
+    if (!forceApi) {
+        const cachedData = localStorage.getItem(CACHE_KEY)
+        if (cachedData) {
+            try {
+                myProducts.value = JSON.parse(cachedData)
+                console.log('📦 Veriler LocalStorage\'dan yüklendi.')
+                loading.value = false
+                return // API isteği yapmadan çık
+            } catch (e) {
+                console.error('Cache parse hatası, API\'ye gidiliyor...')
+            }
+        }
+    }
+
+    // C) API İsteği (Cache yoksa veya zorla yenileme isteniyorsa)
+    try {
+        const res: any = await request('/api/products', {
+            method: 'GET',
+            query: {
+                'pagination[pageSize]': 1000, // Tüm ürünleri çek
+                'fields[0]': 'title',         // Sadece başlıklar (Performans)
+                'filters[user][id][$eq]': user.value.id
+            }
+        })
+        
+        myProducts.value = res.data || []
+        
+        // D) Veriyi Cache'le
+        localStorage.setItem(CACHE_KEY, JSON.stringify(myProducts.value))
+        console.log('🌍 Veriler API\'den çekildi ve Cache\'lendi.')
+
+    } catch (e) {
+        console.error('Ürünler çekilemedi', e)
+    } finally {
+        loading.value = false
+    }
+}
+
+// Sayfa açıldığında başlat
+onMounted(() => initData(false))
+
+// Kullanıcı elle güncellemek isterse
+const forceRefresh = () => {
+    localStorage.removeItem(CACHE_KEY)
+    initData(true)
+}
+
+// 2. AKILLI KARŞILAŞTIRMA (Türkçe Uyumlu)
+const getStatus = (suggestionTitle: string) => {
+    const searchKey = suggestionTitle.toLocaleLowerCase('tr-TR').trim()
+    
+    const match = myProducts.value.find(p => {
+        if(!p.title) return false
+        const myTitle = p.title.toLocaleLowerCase('tr-TR').trim()
+        // Fuzzy Match: "Blender" -> "Arzum Blender Seti" (Eşleşir)
+        return myTitle.includes(searchKey) || searchKey.includes(myTitle)
+    })
+
+    if (match) {
+        return { exists: true, matchName: match.title }
+    }
+    return { exists: false, matchName: '' }
+}
+
+// 3. EKLEME MODALI (Listem.vue ile Aynı Gelişmiş Modal)
+const openAddModal = async (suggestion: any) => {
+  const categories = ['Hazırlık','Mutfak', 'Salon', 'Yatak Odası', 'Elektronik', 'Banyo', 'Diğer']
+
+  const { value: values } = await Swal.fire({
+    title: 'Listene Ekle',
+    html: `
+      <div class="text-left space-y-3 p-1">
+        <label class="text-xs text-gray-400 font-bold uppercase">Ürün Adı</label>
+        <input id="sw-title" class="w-full px-3 py-2 border rounded-lg text-sm bg-gray-50" value="${suggestion.title}">
+        
+        <label class="text-xs text-gray-400 font-bold uppercase">Kategori</label>
+        <select id="sw-category" class="w-full px-3 py-2 border rounded-lg text-sm bg-white">
+           ${categories.map(c => `<option value="${c}" ${c === suggestion.category ? 'selected' : ''}>${c}</option>`).join('')}
+        </select>
+        
+        <div class="border border-dashed border-gray-300 rounded-lg p-3 bg-gray-50 text-center relative mt-2">
+            <input type="file" id="sw-file" accept="image/*" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10">
+            <div class="text-gray-500 text-sm" id="sw-file-label">
+                <i class="fas fa-cloud-upload-alt text-2xl mb-1 text-rose-400"></i><br>
+                Bilgisayardan Fotoğraf Seç
+            </div>
+        </div>
+
+        <div class="text-center text-[10px] text-gray-400 font-bold my-1">- VEYA -</div>
+
+        <input id="sw-image" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="Resim Linki (İnternetten)">
+        
+        <div class="grid grid-cols-2 gap-2 mt-2">
+           <div>
+             <label class="text-xs text-gray-400 font-bold uppercase">Fiyat (₺)</label>
+             <input id="sw-price" type="number" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="0">
+           </div>
+           <div>
+             <label class="text-xs text-gray-400 font-bold uppercase">Link</label>
+             <input id="sw-link" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="https://...">
+           </div>
+        </div>
+      </div>
+    `,
+    showCancelButton: true,
+    confirmButtonText: 'Kaydet',
+    confirmButtonColor: '#e11d48',
+    cancelButtonText: 'Vazgeç',
+    didOpen: () => {
+        const fileInput = document.getElementById('sw-file') as HTMLInputElement
+        const urlInput = document.getElementById('sw-image') as HTMLInputElement
+        const label = document.getElementById('sw-file-label')
+
+        if(fileInput && urlInput && label) {
+            fileInput.addEventListener('change', (e: any) => {
+                if (e.target.files.length > 0) {
+                    label.innerHTML = `<i class="fas fa-check text-green-500"></i> ${e.target.files[0].name}`
+                    label.classList.add('text-green-600', 'font-bold')
+                    urlInput.value = '' 
+                }
+            })
+            urlInput.addEventListener('input', () => {
+                if(urlInput.value.length > 0) {
+                    fileInput.value = '' 
+                    label.innerHTML = `<i class="fas fa-cloud-upload-alt text-2xl mb-1 text-rose-400"></i><br>Bilgisayardan Fotoğraf Seç`
+                    label.classList.remove('text-green-600', 'font-bold')
+                }
+            })
+        }
+    },
+    preConfirm: () => {
+      const title = (document.getElementById('sw-title') as HTMLInputElement)?.value?.trim()
+      const category = (document.getElementById('sw-category') as HTMLSelectElement)?.value
+      const imageUrl = (document.getElementById('sw-image') as HTMLInputElement)?.value?.trim()
+      const fileInput = (document.getElementById('sw-file') as HTMLInputElement)
+      const priceRaw = (document.getElementById('sw-price') as HTMLInputElement)?.value
+      const link = (document.getElementById('sw-link') as HTMLInputElement)?.value?.trim()
+
+      if (!title) { Swal.showValidationMessage('Ürün adı giriniz'); return }
+      const file = fileInput.files?.length ? fileInput.files[0] : null
+      return { title, category, imageUrl, file, priceRaw, link }
+    }
+  })
+
+  if (!values) return
+
+  Swal.fire({ title: 'Listene Ekleniyor...', didOpen: () => Swal.showLoading() })
+
+  try {
+    let uploadedImageId = null
+
+    // Resim Upload
+    if (values.file) {
+        if (!jwtCookie.value) throw new Error("Oturum hatası")
+        const formData = new FormData()
+        formData.append('files', values.file)
+        const uploadRes: any = await $fetch(`${config.public.apiBase}/api/upload`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${jwtCookie.value}` },
+            body: formData
+        })
+        if (uploadRes && uploadRes[0]) uploadedImageId = uploadRes[0].id
+    }
+
+    // Ürün Ekleme İsteği
+    const price = values.priceRaw ? Number(values.priceRaw) : 0
+    await request('/api/products', {
+      method: 'POST',
+      body: {
+        data: {
+          title: values.title,
+          category: values.category,
+          image: uploadedImageId,     
+          imageUrl: values.imageUrl,
+          price: price,
+          link: values.link || null,  
+          is_purchased: false,
+          is_template: false,
+        },
+      },
+    })
+
+    // --- KRİTİK: ANLIK UPDATE MANTIĞI ---
+    // API'den tekrar çekmek yerine, Cache'i ve State'i manuel güncelliyoruz.
+    // Bu sayede "Listende Var" yazısı ışık hızında çıkar.
+    const newItem = { title: values.title }
+    myProducts.value.push(newItem) // State güncelle
+    localStorage.setItem(CACHE_KEY, JSON.stringify(myProducts.value)) // Cache güncelle
+    
+    Swal.mixin({ toast: true, position: 'bottom-end', showConfirmButton: false, timer: 2000 })
+        .fire({ icon: 'success', title: 'Listenize eklendi! 🎉' })
+
+  } catch (e: any) {
+    console.error(e)
+    Swal.fire('Hata', 'Eklenirken bir sorun oluştu.', 'error')
+  }
+}
+</script>
+
+<style scoped>
+.animate-fade-in-up {
+  animation: fadeInUp 0.5s ease-out;
+}
+.animate-fade-in {
+  animation: fadeIn 0.5s ease-out;
+}
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.animate-bounce-short {
+    animation: bounceShort 0.5s;
+}
+@keyframes bounceShort {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-5px); }
+}
+</style>
